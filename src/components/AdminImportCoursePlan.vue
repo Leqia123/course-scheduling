@@ -1,228 +1,280 @@
 <template>
-  <div class="page-content admin-import-course-plan">
+  <div class="course-plan-management">
+    <h2>课程计划管理</h2>
+
     <div class="header-controls">
       <div class="semester-selector">
-        <label for="semester-select">学期:</label>
+        <label for="semester-select">选择学期:</label>
         <select id="semester-select" v-model="selectedSemesterId" @change="fetchCoursePlans">
           <option value="" disabled>请选择学期</option>
-          <!-- 动态加载学期 -->
           <option v-for="semester in semesters" :key="semester.id" :value="semester.id">
             {{ semester.name }}
           </option>
         </select>
       </div>
       <div class="action-buttons">
-<!--         <button class="action-button primary-button" @click="handleManualAdd">手动添加</button> -->
-<!--         <button class="action-button" @click="handleDownloadTemplate">下载模板</button> -->
-<!--         实际的文件输入，通过按钮点击触发 -->
-        <input type="file" ref="fileInput" style="display: none;" @change="handleFileSelected" accept=".xls,.xlsx" />
-        <button class="action-button success-button" @click="triggerFileInput" :disabled="!selectedSemesterId">
+        <button class="action-button primary-button" @click="handleManualAdd" :disabled="!selectedSemesterId">
+          <i class="icon-add"></i> 手动添加
+        </button>
+        <button class="action-button" @click="handleDownloadTemplate">
+          <i class="icon-download"></i> 下载模板
+        </button>
+        <input type="file" ref="fileInputRef" style="display: none;" @change="handleFileSelected" accept=".xls,.xlsx" />
+        <button class="action-button success-button" @click="triggerFileInput" :disabled="!selectedSemesterId || uploadStatus === 'uploading'">
             <i class="icon-upload"></i> {{ uploadStatus === 'uploading' ? '上传中...' : '从Excel导入' }}
         </button>
-        <!-- 上传到服务器和排课按钮暂时保持模拟或后续实现 -->
-        <!-- <button class="action-button success-button" @click="handleUploadToServer">上传到服务器 <i class="icon-server"></i></button> -->
-        <!-- <button class="action-button primary-button" @click="handleScheduling">排课 <i class="icon-schedule"></i></button> -->
       </div>
     </div>
 
-    <p class="upload-hint">
-      选择学期后，可从Excel导入课程计划。导入新计划将**覆盖**该学期所有原有计划。
-      请确保Excel文件包含以下列：<br>
-      '学期名称', '专业名称', '课程名称', '总课时', '课程类型', '授课教师姓名', '是否核心课程', '预计学生人数'。<br>
-      注意：'学期名称'应与上方所选学期匹配（或用于校验），其他字段将用于更新或创建课程及教学任务。
+    <div v-if="uploadStatus === 'uploading'" class="status-message info">正在导入Excel文件，请稍候...</div>
+    <div v-if="successMessage" class="status-message success" v-html="formatMessage(successMessage)"></div>
+    <div v-if="errorMessage" class="status-message error" v-html="formatMessage(errorMessage)"></div>
+
+    <p v-if="selectedSemesterId && !loadingStatus && coursePlans.length > 0" class="upload-hint">
+      提示: 从Excel导入将<strong style="color: red;">覆盖</strong>当前选定学期的所有课程计划。
+      Excel文件应包含列：'学期名称', '专业名称', '课程名称', '总课时', '课程类型', '授课教师姓名', '是否核心课程', '预计学生人数'。
     </p>
 
+    <div v-if="loadingStatus === 'loading'" class="status-message info">正在加载课程计划...</div>
 
-    <!-- 显示加载状态或错误信息 -->
-    <div v-if="loadingStatus" class="status-message loading">{{ loadingStatus }}</div>
-    <div v-if="errorMessage" class="status-message error">{{ errorMessage }}</div>
-    <div v-if="successMessage" class="status-message success">{{ successMessage }}</div>
-
-
-    <div class="table-container">
+    <div class="table-container" v-if="selectedSemesterId && coursePlans.length > 0">
       <table>
         <thead>
           <tr>
-            <!-- <th><input type="checkbox" /></th> -->
             <th>专业</th>
             <th>课程名称</th>
             <th>课程类型</th>
-            <th>教师</th>
-            <th>预计人数</th>
-            <th>核心课</th>
             <th>总学时</th>
+            <th>授课教师</th>
+            <th>核心课</th>
+            <th>预计人数</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody>
-          <!-- 使用从后端获取的 coursePlans 数据 -->
           <tr v-for="plan in coursePlans" :key="plan.id">
-            <!-- <td><input type="checkbox" /></td> -->
-            <td>{{ plan.major_name }} (ID: {{ plan.major_id }})</td>
-            <td>{{ plan.course_name }} (ID: {{ plan.course_id }})</td>
+            <td>{{ plan.major_name }}</td>
+            <td>{{ plan.course_name }}</td>
             <td>{{ plan.course_type }}</td>
-            <td>{{ plan.teacher_name }} (ID: {{ plan.teacher_id }})</td>
-            <td>{{ plan.expected_students }}</td>
-            <td>{{ plan.is_core_course ? '是' : '否' }}</td>
             <td>{{ plan.total_sessions }}</td>
+            <td>{{ plan.teacher_name }}</td>
+            <td>{{ plan.is_core_course ? '是' : '否' }}</td>
+            <td>{{ plan.expected_students }}</td>
             <td>
-              <!-- 编辑和删除按钮暂时禁用或后续实现 -->
-              <!-- <button class="button edit-button" @click="handleEditCourse(plan)" disabled>编辑</button> -->
-              <!-- <button class="button delete-button" @click="handleDeleteCourse(plan.id)" disabled>删除</button> -->
-               <span style="color: #999;">N/A</span>
-            </td>
-          </tr>
-          <tr v-if="!loadingStatus && coursePlans.length === 0 && selectedSemesterId">
-            <td colspan="8" style="text-align: center; color: #666; padding: 20px;">
-              当前学期没有课程计划数据。
-            </td>
-          </tr>
-          <tr v-if="!selectedSemesterId">
-            <td colspan="8" style="text-align: center; color: #666; padding: 20px;">
-              请先选择一个学期。
+              <button class="button-link edit-button" @click="handleEditCourse(plan)">编辑</button>
+              <button class="button-link delete-button" @click="handleDeleteCourse(plan.id, plan.course_name)">删除</button>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
+    <div v-if="selectedSemesterId && !loadingStatus && coursePlans.length === 0 && !errorMessage" class="status-message info">
+      当前学期没有课程计划数据。您可以手动添加或从Excel导入。
+    </div>
+     <div v-if="!selectedSemesterId && !loadingStatus" class="status-message info">
+      请先选择一个学期以查看或管理课程计划。
+    </div>
 
-    <!-- 模态框暂时移除，因为添加/编辑功能未对接后端 -->
-    <!-- ... 原有的模态框代码 ... -->
+
+    <!-- Modal for Add/Edit Course Plan -->
+    <div v-if="isModalOpen" class="modal-overlay" @click.self="closeModal">
+      <div class="modal-content">
+        <h3 class="modal-title">{{ modalMode === 'add' ? '添加新课程计划' : '编辑课程计划' }}</h3>
+        <form @submit.prevent="handleSubmitPlan">
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="plan-major">专业: <span class="required">*</span></label>
+              <select id="plan-major" v-model="currentPlan.major_id" required>
+                <option value="" disabled>请选择专业</option>
+                <option v-for="major in majorsList" :key="major.id" :value="major.id">
+                  {{ major.name }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="plan-teacher">授课教师: <span class="required">*</span></label>
+              <select id="plan-teacher" v-model="currentPlan.teacher_id" required>
+                <option value="" disabled>请选择教师</option>
+                <option v-for="teacher in teachersList" :key="teacher.id" :value="teacher.id">
+                  {{ teacher.name }}
+                </option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="plan-course-name">课程名称: <span class="required">*</span></label>
+              <input type="text" id="plan-course-name" v-model.trim="currentPlan.course_name" required />
+            </div>
+
+            <div class="form-group">
+              <label for="plan-course-type">课程类型:</label>
+              <input type="text" id="plan-course-type" v-model.trim="currentPlan.course_type" placeholder="例如: 理论课" />
+            </div>
+
+            <div class="form-group">
+              <label for="plan-total-sessions">总课时: <span class="required">*</span></label>
+              <input type="number" id="plan-total-sessions" v-model.number="currentPlan.total_sessions" required min="0" />
+            </div>
+
+            <div class="form-group">
+              <label for="plan-expected-students">预计学生人数: <span class="required">*</span></label>
+              <input type="number" id="plan-expected-students" v-model.number="currentPlan.expected_students" required min="0" />
+            </div>
+
+            <div class="form-group checkbox-group full-width">
+              <input type="checkbox" id="plan-is-core" v-model="currentPlan.is_core_course" />
+              <label for="plan-is-core">是否核心课程</label>
+            </div>
+          </div>
+
+          <div v-if="modalErrorMessage" class="status-message error modal-error">{{ modalErrorMessage }}</div>
+
+          <div class="modal-actions">
+            <button type="button" class="button cancel-button" @click="closeModal" :disabled="isSubmittingModal">取消</button>
+            <button type="submit" class="button success-button" :disabled="isSubmittingModal">
+              {{ isSubmittingModal ? '提交中...' : (modalMode === 'add' ? '添加计划' : '保存更改') }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
 
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
-// 引入 axios
+import { ref, onMounted, watch } from 'vue';
 import axios from 'axios';
 
+// --- Configuration ---
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
+
 // --- State ---
-const semesters = ref([]); // 学期列表
-const selectedSemesterId = ref(''); // 当前选中的学期 ID
-const coursePlans = ref([]); // 从后端获取的课程计划列表
-const fileInput = ref(null); // 文件输入元素的引用
-const selectedFile = ref(null); // 当前选中的文件
+const semesters = ref([]);
+const selectedSemesterId = ref('');
+const coursePlans = ref([]);
+const fileInputRef = ref(null); // Changed name to avoid conflict
+// const selectedFile = ref(null); // Not strictly needed if processed immediately
 
 // --- Status Flags ---
-const loadingStatus = ref(''); // 加载状态提示信息
-const errorMessage = ref(''); // 错误消息
-const successMessage = ref(''); // 成功消息
-const uploadStatus = ref(''); // 上传状态 ('', 'uploading', 'success', 'error')
+const loadingStatus = ref(''); // 'loading', ''
+const errorMessage = ref('');
+const successMessage = ref('');
+const uploadStatus = ref(''); // 'uploading', 'success', 'error', ''
 
-// 后端 API 地址 (确保与您的Flask运行地址和端口一致)
-const API_BASE_URL = 'http://localhost:5000'; // 或者您的Flask服务器地址
+// --- Modal State ---
+const isModalOpen = ref(false);
+const modalMode = ref('add'); // 'add' or 'edit'
+const currentPlan = ref({ // Initialize with all fields for reactivity
+  semester_id: '',
+  major_id: '',
+  course_name: '',
+  total_sessions: null,
+  course_type: '理论课', // Default
+  teacher_id: '',
+  is_core_course: false,
+  expected_students: null,
+});
+const editingPlanId = ref(null); // Stores course_assignments.id for editing
+// const editingOriginalCourseId = ref(null); // Not strictly needed for current backend PUT
+const majorsList = ref([]);
+const teachersList = ref([]);
+const modalErrorMessage = ref('');
+const isSubmittingModal = ref(false);
+
 
 // --- Lifecycle Hooks ---
 onMounted(async () => {
   await fetchSemesters();
-  // 如果有学期数据，默认选中第一个并加载课程计划
-  if (semesters.value.length > 0) {
-    // selectedSemesterId.value = semesters.value[0].id; // 可选：默认选中第一个
-    // await fetchCoursePlans();
-  } else {
-      errorMessage.value = "未能加载学期列表，请检查后端服务是否运行。";
+  // Initial fetch of dropdown data for modal, can be moved to openModal if preferred
+  await fetchModalDropdownData();
+});
+
+watch(selectedSemesterId, (newVal, oldVal) => {
+  if (newVal && newVal !== oldVal) {
+    clearMainMessages();
+    coursePlans.value = []; // Clear plans immediately
+    fetchCoursePlans(); // Auto-fetch when semester changes and is valid
+  } else if (!newVal) {
+    coursePlans.value = []; // Clear plans if semester is deselected
+    clearMainMessages();
   }
 });
 
 // --- Methods ---
-
-// 清除状态消息
-const clearMessages = () => {
+const clearMainMessages = () => {
     errorMessage.value = '';
     successMessage.value = '';
-    loadingStatus.value = '';
-    uploadStatus.value = '';
+    // uploadStatus is handled separately
 };
 
-// 获取学期列表
+const formatMessage = (message) => {
+    // Replace newlines with <br> for HTML display
+    return message.replace(/\n/g, '<br>');
+};
+
 const fetchSemesters = async () => {
-  clearMessages();
-  loadingStatus.value = '正在加载学期列表...';
+  loadingStatus.value = 'loading';
   try {
     const response = await axios.get(`${API_BASE_URL}/api/semesters`);
     semesters.value = response.data;
+    // If there's a previously selected semester or only one semester, select it?
+    // For now, requires manual selection.
   } catch (error) {
     console.error('获取学期列表失败:', error);
-    errorMessage.value = `加载学期列表失败: ${error.response?.data?.message || error.message}`;
-    semesters.value = []; // 清空以防万一
+    errorMessage.value = `获取学期列表失败: ${error.response?.data?.message || error.message}`;
   } finally {
-    loadingStatus.value = ''; // 清除加载提示
+    loadingStatus.value = '';
   }
 };
 
-// 获取选定学期的课程计划
 const fetchCoursePlans = async () => {
   if (!selectedSemesterId.value) {
-    coursePlans.value = []; // 如果未选择学期，清空列表
+    coursePlans.value = [];
     return;
   }
-  clearMessages();
-  loadingStatus.value = `正在加载学期 ${selectedSemesterId.value} 的课程计划...`;
-  coursePlans.value = []; // 先清空
-
+  loadingStatus.value = 'loading';
+  clearMainMessages();
   try {
     const response = await axios.get(`${API_BASE_URL}/api/course-plans`, {
       params: { semester_id: selectedSemesterId.value }
     });
     coursePlans.value = response.data;
-    if (coursePlans.value.length === 0) {
-        successMessage.value = `学期 ${selectedSemesterId.value} 当前没有课程计划数据。`;
-    }
   } catch (error) {
-    console.error(`获取课程计划失败 (学期 ${selectedSemesterId.value}):`, error);
-    errorMessage.value = `加载课程计划失败: ${error.response?.data?.message || error.message}`;
-    coursePlans.value = []; // 清空列表
+    console.error('获取课程计划失败:', error);
+    coursePlans.value = []; // Clear on error
+    errorMessage.value = `获取课程计划失败: ${error.response?.data?.message || error.message}`;
   } finally {
     loadingStatus.value = '';
   }
 };
 
-// 触发文件选择框
 const triggerFileInput = () => {
-  // 重置状态并清除之前的选择
-  selectedFile.value = null;
-  if (fileInput.value) {
-      fileInput.value.value = ''; // 清空文件输入，确保选择同名文件也能触发 change
-      fileInput.value.click();
-  }
+  clearMainMessages();
+  uploadStatus.value = ''; // Reset upload status
+  fileInputRef.value.click();
 };
 
-// 处理文件选择事件
 const handleFileSelected = (event) => {
   const file = event.target.files[0];
-  if (!file) {
-    selectedFile.value = null;
-    return;
+  if (file) {
+    handleImportExcel(file);
   }
-  if (!file.name.endsWith('.xls') && !file.name.endsWith('.xlsx')) {
-    clearMessages();
-    errorMessage.value = '文件格式不正确，请上传 .xls 或 .xlsx 文件。';
-    selectedFile.value = null;
-    event.target.value = ''; // 清空选择
-    return;
-  }
-  selectedFile.value = file;
-  // 文件选择后立即尝试上传
-  handleImportExcel();
+  fileInputRef.value.value = ''; // Reset file input
 };
 
-// 处理Excel导入（实际是上传文件到后端）
-const handleImportExcel = async () => {
-  if (!selectedFile.value) {
-    errorMessage.value = '请先选择一个Excel文件。';
+const handleImportExcel = async (file) => {
+  if (!selectedSemesterId.value) {
+    errorMessage.value = '请先选择一个学期才能导入课程计划。';
     return;
   }
-  if (!selectedSemesterId.value) {
-      errorMessage.value = '请先选择要导入的学期。';
-      return;
-  }
-
-  clearMessages();
-  uploadStatus.value = 'uploading'; // 设置上传状态
+  clearMainMessages();
+  uploadStatus.value = 'uploading';
 
   const formData = new FormData();
-  formData.append('file', selectedFile.value);
+  formData.append('file', file);
   formData.append('semester_id', selectedSemesterId.value);
 
   try {
@@ -231,204 +283,449 @@ const handleImportExcel = async () => {
         'Content-Type': 'multipart/form-data'
       }
     });
-    successMessage.value = response.data.message || '文件上传并处理成功！';
+    successMessage.value = response.data.message || 'Excel文件导入成功！';
     uploadStatus.value = 'success';
-    // 上传成功后，刷新课程计划列表
-    await fetchCoursePlans();
+    await fetchCoursePlans(); // Refresh list
   } catch (error) {
-    console.error('文件上传或处理失败:', error);
-    errorMessage.value = `导入失败: ${error.response?.data?.message || error.message}`;
+    console.error('Excel导入失败:', error);
+    errorMessage.value = `Excel导入失败: ${error.response?.data?.message || '未知错误，请检查文件格式或联系管理员。'}`;
     uploadStatus.value = 'error';
   } finally {
-     // 不论成功失败，一段时间后清除上传状态，除非是上传中
-     if (uploadStatus.value !== 'uploading') {
-          setTimeout(() => {
-              if (uploadStatus.value !== 'uploading') { // 再次检查，防止覆盖进行中的上传
-                  uploadStatus.value = '';
-              }
-          }, 3000); // 3秒后清除状态
-     }
-    // 清空文件引用和输入框值
-    selectedFile.value = null;
-    if (fileInput.value) {
-        fileInput.value.value = '';
-    }
+     if (uploadStatus.value === 'uploading') uploadStatus.value = ''; // Reset if still uploading (e.g. network error)
   }
 };
 
-// --- 其他按钮的占位或待实现方法 ---
-// const handleManualAdd = () => { alert('手动添加功能待实现'); };
-// const handleDownloadTemplate = () => { alert('下载模板功能待实现'); };
-// const handleUploadToServer = () => { alert('上传到服务器功能待实现'); };
-// const handleScheduling = () => { alert('排课功能待实现'); };
-// const handleEditCourse = (plan) => { alert(`编辑课程 ${plan.id} 功能待实现`); };
-// const handleDeleteCourse = (planId) => { alert(`删除课程 ${planId} 功能待实现`); };
+const handleDownloadTemplate = async () => {
+  clearMainMessages();
+  try {
+    const response = await axios.get(`${API_BASE_URL}/api/course-plans/template`, {
+      responseType: 'blob',
+    });
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    const contentDisposition = response.headers['content-disposition'];
+    let fileName = 'course_plan_template.xlsx';
+    if (contentDisposition) {
+        const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/i);
+        if (fileNameMatch && fileNameMatch.length === 2) fileName = fileNameMatch[1];
+    }
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    successMessage.value = '课程计划模板已开始下载。';
+  } catch (error) {
+    console.error('下载模板失败:', error);
+    errorMessage.value = `下载模板失败: ${error.response?.data?.message || error.message}`;
+  }
+};
+
+const handleDeleteCourse = async (planId, courseName) => {
+  if (!window.confirm(`确定要删除课程计划 “${courseName}” (ID: ${planId}) 吗？此操作不可恢复。`)) {
+    return;
+  }
+  clearMainMessages();
+  try {
+    await axios.delete(`${API_BASE_URL}/api/course-plans/${planId}`);
+    successMessage.value = `课程计划 “${courseName}” (ID: ${planId}) 已成功删除！`;
+    await fetchCoursePlans();
+  } catch (error) {
+    console.error(`删除课程计划 ${planId} 失败:`, error);
+    errorMessage.value = `删除失败: ${error.response?.data?.message || error.message}`;
+  }
+};
+
+const fetchModalDropdownData = async () => {
+    // This can be called onMounted or when opening modal for the first time
+    if (majorsList.value.length > 0 && teachersList.value.length > 0) return; // Already loaded
+
+    isSubmittingModal.value = true; // Use to indicate loading for dropdowns
+    modalErrorMessage.value = '';
+    try {
+        const [majorsRes, teachersRes] = await Promise.all([
+            axios.get(`${API_BASE_URL}/api/majors-list`),
+            axios.get(`${API_BASE_URL}/api/teachers-list`)
+        ]);
+        majorsList.value = majorsRes.data;
+        teachersList.value = teachersRes.data;
+    } catch (error) {
+        console.error('加载专业/教师列表失败:', error);
+        // Show error in modal or main page
+        modalErrorMessage.value = '加载专业或教师列表失败，请稍后重试或检查网络连接。';
+    } finally {
+        isSubmittingModal.value = false;
+    }
+};
+
+const openModal = async (mode, plan = null) => {
+  modalMode.value = mode;
+  modalErrorMessage.value = '';
+  isSubmittingModal.value = false;
+
+  // Ensure dropdown data is available
+  if (majorsList.value.length === 0 || teachersList.value.length === 0) {
+      await fetchModalDropdownData();
+      if (modalErrorMessage.value && (majorsList.value.length === 0 || teachersList.value.length === 0)) {
+          // If fetching critical data failed, don't open modal and show main error
+          errorMessage.value = modalErrorMessage.value || '无法打开表单：缺少必要数据。';
+          isModalOpen.value = false;
+          return;
+      }
+  }
+
+  if (mode === 'add') {
+    currentPlan.value = {
+      semester_id: selectedSemesterId.value, // Auto-set current semester
+      major_id: '',
+      course_name: '',
+      total_sessions: null,
+      course_type: '理论课',
+      teacher_id: '',
+      is_core_course: false,
+      expected_students: null,
+    };
+    editingPlanId.value = null;
+  } else if (mode === 'edit' && plan) {
+    currentPlan.value = {
+      semester_id: plan.semester_id, // Keep existing semester_id
+      major_id: plan.major_id,
+      teacher_id: plan.teacher_id,
+      course_name: plan.course_name,
+      total_sessions: plan.total_sessions,
+      course_type: plan.course_type,
+      is_core_course: plan.is_core_course,
+      expected_students: plan.expected_students,
+    };
+    editingPlanId.value = plan.id; // This is course_assignments.id
+  }
+  isModalOpen.value = true;
+};
+
+const closeModal = () => {
+  isModalOpen.value = false;
+  // Reset currentPlan carefully if fields are bound directly
+   currentPlan.value = { semester_id: '', major_id: '', course_name: '', total_sessions: null, course_type: '理论课', teacher_id: '', is_core_course: false, expected_students: null, };
+  editingPlanId.value = null;
+  modalErrorMessage.value = '';
+};
+
+const handleManualAdd = () => {
+  if (!selectedSemesterId.value) {
+    errorMessage.value = '请先选择一个学期才能添加课程计划。';
+    return;
+  }
+  openModal('add');
+};
+
+const handleEditCourse = (plan) => {
+  openModal('edit', plan);
+};
+
+const handleSubmitPlan = async () => {
+  modalErrorMessage.value = '';
+  isSubmittingModal.value = true;
+
+  const payload = { ...currentPlan.value };
+  // Ensure numeric fields are numbers, not strings from input type="number"
+  payload.total_sessions = Number(payload.total_sessions);
+  payload.expected_students = Number(payload.expected_students);
+
+
+  // Basic client-side validation (backend will also validate)
+  if (!payload.major_id || !payload.course_name || !payload.teacher_id ||
+      payload.total_sessions === null || payload.total_sessions < 0 ||
+      payload.expected_students === null || payload.expected_students < 0 ) {
+      modalErrorMessage.value = '请填写所有必填项 (*)，并确保数值非负。';
+      isSubmittingModal.value = false;
+      return;
+  }
+  if (!payload.semester_id && modalMode.value === 'add') { // semester_id must be present for add
+     payload.semester_id = selectedSemesterId.value; // re-ensure
+     if(!payload.semester_id) {
+        modalErrorMessage.value = '未指定学期，无法添加。';
+        isSubmittingModal.value = false;
+        return;
+     }
+  }
+
+
+  try {
+    clearMainMessages(); // Clear main page messages before new action
+    if (modalMode.value === 'add') {
+      await axios.post(`${API_BASE_URL}/api/course-plans`, payload);
+      successMessage.value = '新课程计划添加成功！';
+    } else { // 'edit'
+      await axios.put(`${API_BASE_URL}/api/course-plans/${editingPlanId.value}`, payload);
+      successMessage.value = `课程计划 (ID: ${editingPlanId.value}) 更新成功！`;
+    }
+    closeModal();
+    await fetchCoursePlans(); // Refresh the list
+  } catch (error) {
+    console.error('保存课程计划失败:', error);
+    modalErrorMessage.value = `保存失败: ${error.response?.data?.message || error.message}`;
+  } finally {
+    isSubmittingModal.value = false;
+  }
+};
 
 </script>
 
 <style scoped>
-/* 保持原有样式，添加状态消息样式 */
-.page-content {
+.course-plan-management {
   padding: 20px;
-}
-/* ... (复制/保留您原有的<style scoped>内容) ... */
-
-.status-message {
-    padding: 10px 15px;
-    border-radius: 4px;
-    margin-bottom: 15px;
-    text-align: center;
-    font-weight: bold;
-}
-.status-message.loading {
-    background-color: #e2e3e5;
-    color: #383d41;
-    border: 1px solid #d6d8db;
-}
-.status-message.error {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-}
-.status-message.success {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
+  font-family: Arial, sans-serif;
+  max-width: 1200px;
+  margin: auto;
 }
 
+h2 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 25px;
+}
 
 .header-controls {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
-  flex-wrap: wrap; /* 响应式布局，按钮可以换行 */
-  gap: 10px; /* 按钮和选择器之间的间距 */
+  padding: 15px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
+.semester-selector {
+  display: flex;
+  align-items: center;
+}
 .semester-selector label {
   margin-right: 10px;
   font-weight: bold;
 }
-
 .semester-selector select {
   padding: 8px 12px;
-  border: 1px solid #ccc;
   border-radius: 4px;
-  font-size: 14px;
-  min-width: 180px; /* 给下拉框一个最小宽度 */
+  border: 1px solid #ced4da;
+  min-width: 200px;
 }
 
 .action-buttons button {
-  padding: 8px 15px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
   margin-left: 10px;
-  transition: background-color 0.3s ease, opacity 0.3s ease;
-  display: inline-flex; /* 让图标和文字对齐 */
+  padding: 8px 15px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: background-color 0.2s ease;
+}
+.action-button {
+  display: inline-flex;
   align-items: center;
 }
-.action-buttons button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-.action-buttons button i {
-    margin-right: 5px; /* 图标和文字间距 */
+.action-button i {
+  margin-right: 6px;
 }
 
-.action-button {
-  background-color: #f0f0f0;
-  color: #333;
-  border: 1px solid #ccc;
-}
-.action-button:hover:not(:disabled) {
-  background-color: #e0e0e0;
-}
-
-.primary-button {
-  background-color: #007bff;
-  color: white;
-}
-.primary-button:hover:not(:disabled) {
-  background-color: #0056b3;
+.primary-button { background-color: #007bff; color: white; }
+.primary-button:hover:not(:disabled) { background-color: #0056b3; }
+.success-button { background-color: #28a745; color: white; }
+.success-button:hover:not(:disabled) { background-color: #1e7e34; }
+.action-button:disabled {
+  background-color: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
 }
 
-.success-button {
-  background-color: #28a745;
-  color: white;
-}
-.success-button:hover:not(:disabled) {
-  background-color: #218838;
-}
-
-.button.delete-button {
-  background-color: #dc3545;
-  color: white;
-  margin-right: 5px;
-}
-.button.delete-button:hover:not(:disabled) {
-  background-color: #c82333;
-}
-
-.button.edit-button {
-  background-color: #17a2b8;
-  color: white;
-  margin-right: 5px; /* 增加编辑按钮和删除按钮之间的间距 */
-}
-.button.edit-button:hover:not(:disabled) {
-  background-color: #138496;
-}
 
 .upload-hint {
-  background-color: #fff3cd; /* Use warning color for hint */
-  border: 1px solid #ffeeba;
-  color: #856404;
-  padding: 10px 15px;
-  border-radius: 4px;
-  margin-bottom: 20px;
   font-size: 0.9em;
+  color: #666;
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: #e9ecef;
+  border-left: 3px solid #007bff;
+  border-radius: 4px;
 }
+
+.status-message {
+  padding: 12px 18px;
+  margin-bottom: 15px;
+  border-radius: 5px;
+  font-size: 0.95em;
+  border: 1px solid transparent;
+}
+.status-message.info { background-color: #e6f7ff; border-color: #91d5ff; color: #005280; }
+.status-message.success { background-color: #e6ffed; border-color: #b7eb8f; color: #135200; }
+.status-message.error { background-color: #fff1f0; border-color: #ffa39e; color: #a8071a; }
+
 
 .table-container {
-  overflow-x: auto; /* 当表格内容超出时横向滚动 */
+  margin-top: 20px;
+  overflow-x: auto; /* For responsive tables on small screens */
 }
-
 table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 20px;
-  background-color: white;
-  box-shadow: 0 0 10px rgba(0,0,0,0.05);
-  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
-
-table th,
-table td {
-  border: 1px solid #ddd;
+th, td {
+  border: 1px solid #dee2e6;
   padding: 10px 12px;
   text-align: left;
-  white-space: nowrap; /* 防止内容换行，保持表格紧凑 */
-  font-size: 14px; /* 稍微调整字体大小 */
+  font-size: 0.9em;
 }
-
-table th {
+th {
   background-color: #f2f2f2;
   font-weight: bold;
   color: #333;
 }
-
-table tbody tr:nth-child(even) {
+tbody tr:nth-child(even) {
   background-color: #f9f9f9;
 }
-
-table tbody tr:hover {
-  background-color: #f1f1f1;
+tbody tr:hover {
+  background-color: #e9ecef;
 }
 
-/* 简单的图标占位符 */
-.icon-upload::before { content: '⬆'; }
-.icon-server::before { content: '☁'; }
-.icon-schedule::before { content: '🗓️'; }
+.button-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  margin-right: 10px;
+}
+.edit-button { color: #007bff; }
+.edit-button:hover { color: #0056b3; }
+.delete-button { color: #dc3545; }
+.delete-button:hover { color: #a71d2a; }
+
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 15px; /* For small screens, so modal doesn't touch edges */
+}
+
+.modal-content {
+  background-color: white;
+  padding: 25px 30px;
+  border-radius: 8px;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+  width: 100%;
+  max-width: 650px; /* Wider modal for more fields */
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-title {
+  margin-top: 0;
+  margin-bottom: 20px;
+  font-size: 1.4em;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); /* Responsive grid */
+  gap: 15px 20px; /* Row gap, Column gap */
+}
+
+.form-group {
+  /* Removed margin-bottom as gap is handled by grid */
+}
+.form-group.full-width {
+  grid-column: 1 / -1; /* Span full width */
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: bold;
+  font-size: 0.9em;
+  color: #555;
+}
+.required { color: red; margin-left: 2px; }
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-size: 1em;
+}
+.form-group input[type="text"]:focus,
+.form-group input[type="number"]:focus,
+.form-group select:focus {
+  border-color: #007bff;
+  outline: none;
+  box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+}
+
+.form-group.checkbox-group {
+  display: flex;
+  align-items: center;
+  padding-top: 10px; /* Align with other labels if they have margin-bottom */
+}
+.form-group.checkbox-group input[type="checkbox"] {
+  margin-right: 8px;
+  width: auto;
+  height: auto; /* Use browser default */
+  vertical-align: middle;
+  transform: scale(1.1);
+}
+.form-group.checkbox-group label {
+  margin-bottom: 0;
+  font-weight: normal;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 25px;
+  padding-top: 15px;
+  border-top: 1px solid #eee;
+}
+.modal-actions .button {
+  padding: 10px 20px;
+  margin-left: 10px;
+}
+.modal-actions .cancel-button {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.modal-actions .cancel-button:hover:not(:disabled) { background-color: #545b62; }
+
+
+.status-message.modal-error {
+    margin-top: 15px;
+    margin-bottom: 0;
+    grid-column: 1 / -1; /* Span full width if inside grid */
+}
+
+/* Icons (simple text based, replace with actual icon font/svg if available) */
+.icon-add::before { content: '➕'; }
+.icon-download::before { content: '📄'; }
+.icon-upload::before { content: '📤'; }
 </style>
