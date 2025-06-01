@@ -5,117 +5,27 @@ con = psycopg2.connect(database="postgres", user="postgres", password="031104", 
 cur = con.cursor()
 #用cursor中的execute 使用DDL语句创建一个名为 STUDENT 的表,指定表的字段以及字段类型
 select_query = """-- 创建 Semesters 表（学期表）
-CREATE TABLE Semesters (
-    SemesterID SERIAL PRIMARY KEY,
-    Name VARCHAR(50) NOT NULL,
-    StartDate DATE NOT NULL,
-    EndDate DATE NOT NULL
-);
 
--- 创建 Majors 表（专业表）
-CREATE TABLE Majors (
-    MajorID SERIAL PRIMARY KEY,
-    MajorName VARCHAR(100) NOT NULL
-);
-
--- 创建 Courses 表（课程表）
-CREATE TABLE Courses (
-    CourseID SERIAL PRIMARY KEY,
-    CourseName VARCHAR(100) NOT NULL,
-    TotalSessions INT NOT NULL
-);
-
--- 创建 Students 表（学生表）
-CREATE TABLE Students (
-    StudentID INT PRIMARY KEY,
-    MajorID INT,
-    FOREIGN KEY (StudentID) REFERENCES Users(UserID),
-    FOREIGN KEY (MajorID) REFERENCES Majors(MajorID)
-);
-
--- 创建 Teachers 表（教员表）
-CREATE TABLE Teachers (
-    TeacherID INT PRIMARY KEY,
-    FOREIGN KEY (TeacherID) REFERENCES Users(UserID)
-);
-
--- 创建 TeacherCourses 表（教员课程表）
-CREATE TABLE TeacherCourses (
-    TeacherCourseID SERIAL PRIMARY KEY,
-    TeacherID INT,
-    CourseID INT,
-    FOREIGN KEY (TeacherID) REFERENCES Teachers(TeacherID),
-    FOREIGN KEY (CourseID) REFERENCES Courses(CourseID),
-    UNIQUE (TeacherID, CourseID)
-);
-
--- 创建 CourseAssignments 表（课程分配表）
-CREATE TABLE CourseAssignments (
-    AssignmentID SERIAL PRIMARY KEY,
-    MajorID INT,
-    CourseID INT,
-    TeacherID INT,
-    SemesterID INT,
-    FOREIGN KEY (MajorID) REFERENCES Majors(MajorID),
-    FOREIGN KEY (CourseID) REFERENCES Courses(CourseID),
-    FOREIGN KEY (TeacherID) REFERENCES Teachers(TeacherID),
-    FOREIGN KEY (SemesterID) REFERENCES Semesters(SemesterID),
-    UNIQUE (SemesterID, MajorID, CourseID)
-);
-
--- 创建 Classrooms 表（教室表）
-CREATE TABLE Classrooms (
-    ClassroomID SERIAL PRIMARY KEY,
-    Building VARCHAR(50),
-    RoomNumber VARCHAR(20)
-);
-
--- 创建 TimeSlots 表（时间段表，简化版）
-CREATE TABLE TimeSlots (
-    TimeSlotID SERIAL PRIMARY KEY,
-    DayOfWeek VARCHAR(10),
-    Period INT,
-    StartTime TIME,
-    EndTime TIME,
-    UNIQUE (DayOfWeek, Period)
-);
-
--- 创建 Timetable 表（课表）
-CREATE TABLE Timetable (
-    TimetableID SERIAL PRIMARY KEY,
-    SemesterID INT,
-    MajorID INT,
-    CourseID INT,
-    TeacherID INT,
-    ClassroomID INT,
-    TimeSlotID INT,
-    WeekNumber INT,
-    FOREIGN KEY (SemesterID) REFERENCES Semesters(SemesterID),
-    FOREIGN KEY (MajorID) REFERENCES Majors(MajorID),
-    FOREIGN KEY (CourseID) REFERENCES Courses(CourseID),
-    FOREIGN KEY (TeacherID) REFERENCES Teachers(TeacherID),
-    FOREIGN KEY (ClassroomID) REFERENCES Classrooms(ClassroomID),
-    FOREIGN KEY (TimeSlotID) REFERENCES TimeSlots(TimeSlotID),
-    UNIQUE (SemesterID, ClassroomID, TimeSlotID, WeekNumber),
-    UNIQUE (SemesterID, TeacherID, TimeSlotID, WeekNumber)
-);
-
--- 创建 AdjustmentApplications 表（调课申请表）
-CREATE TABLE AdjustmentApplications (
-    ApplicationID SERIAL PRIMARY KEY,
-    TeacherID INT,
-    TimetableID INT,
-    ProposedTimeSlotID INT,
-    ProposedWeekNumber INT,
-    Status VARCHAR(20) NOT NULL DEFAULT 'Pending',
-    Reason TEXT,
-    AdminComment TEXT,
-    SubmittedAt TIMESTAMP,
-    ProcessedAt TIMESTAMP,
-    FOREIGN KEY (TeacherID) REFERENCES Teachers(TeacherID),
-    FOREIGN KEY (TimetableID) REFERENCES Timetable(TimetableID),
-    FOREIGN KEY (ProposedTimeSlotID) REFERENCES TimeSlots(TimeSlotID)
-);
+-- Insert Course Assignments (Manually assign IDs starting from 1)
+-- Make sure semester_id=1 matches the semester inserted above
+INSERT INTO course_assignments (id, major_id, course_id, teacher_id, semester_id, is_core_course, expected_students) VALUES
+(1, 1, 101, 1, 1, TRUE, 75), (2, 1, 102, 1, 1, TRUE, 75), (3, 1, 103, 2, 1, TRUE, 75),
+(4, 1, 401, 3, 1, TRUE, 75), (5, 1, 402, 3, 1, TRUE, 75), (6, 1, 403, 3, 1, TRUE, 75),
+(7, 1, 404, 7, 1, TRUE, 75), (8, 1, 405, 1, 1, TRUE, 75), (9, 1, 406, 3, 1, FALSE, 75),
+(10, 1, 408, 1, 1, FALSE, 75), (11, 1, 407, 8, 1, TRUE, 75),
+(12, 2, 101, 1, 1, TRUE, 65), (13, 2, 102, 1, 1, TRUE, 65), (14, 2, 103, 2, 1, TRUE, 65),
+(15, 2, 104, 6, 1, TRUE, 65), (16, 2, 201, 4, 1, TRUE, 65), (17, 2, 202, 6, 1, TRUE, 65),
+(18, 2, 203, 6, 1, FALSE, 65), (19, 2, 204, 4, 1, TRUE, 65), (20, 2, 205, 4, 1, TRUE, 65),
+(21, 2, 207, 4, 1, FALSE, 65), (22, 2, 206, 8, 1, TRUE, 65),
+(23, 3, 101, 1, 1, TRUE, 80), (24, 3, 103, 2, 1, TRUE, 80), (25, 3, 401, 3, 1, TRUE, 80),
+(26, 3, 402, 3, 1, TRUE, 80), (27, 3, 403, 3, 1, TRUE, 80), (28, 3, 406, 3, 1, TRUE, 80),
+(29, 3, 404, 7, 1, FALSE, 80), (30, 3, 405, 1, 1, FALSE, 80), (31, 3, 407, 8, 1, TRUE, 80),
+(32, 4, 101, 1, 1, TRUE, 60), (33, 4, 103, 2, 1, TRUE, 60), (34, 4, 104, 6, 1, TRUE, 60),
+(35, 4, 501, 5, 1, TRUE, 60), (36, 4, 502, 5, 1, TRUE, 60), (37, 4, 503, 5, 1, TRUE, 60),
+(38, 4, 504, 5, 1, TRUE, 60), (39, 4, 505, 5, 1, FALSE, 60), (40, 4, 506, 8, 1, TRUE, 60),
+(41, 5, 103, 2, 1, TRUE, 55), (42, 5, 104, 6, 1, TRUE, 55), (43, 5, 601, 2, 1, TRUE, 55),
+(44, 5, 602, 6, 1, TRUE, 55), (45, 5, 603, 7, 1, TRUE, 55), (46, 5, 604, 7, 1, FALSE, 55),
+(47, 5, 605, 8, 1, TRUE, 55);
 
 """
 cur.execute(select_query)
