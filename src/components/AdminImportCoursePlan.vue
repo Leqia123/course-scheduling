@@ -23,6 +23,14 @@
         <button class="action-button success-button" @click="triggerFileInput" :disabled="!selectedSemesterId || uploadStatus === 'uploading'">
             <i class="icon-upload"></i> {{ uploadStatus === 'uploading' ? '上传中...' : '从Excel导入' }}
         </button>
+        <button
+    class="action-button warning-button"
+    @click="triggerScheduling"
+    :disabled="!selectedSemesterId || schedulingStatus === 'running'"
+>
+    <i class="icon-schedule"></i> {{ schedulingStatus === 'running' ? '排课中...' : '开始排课' }}
+</button>
+
       </div>
     </div>
 
@@ -139,6 +147,11 @@
         </form>
       </div>
     </div>
+<div v-if="schedulingStatus === 'running'" class="status-message info">正在执行排课，请稍候... 这可能需要一些时间。</div>
+<div v-if="schedulingMessage && schedulingStatus !== 'running'"
+     :class="['status-message', schedulingStatus === 'success' ? 'success' : (schedulingStatus === 'success_no_tasks' ? 'info' : 'error')]"
+     v-html="formatMessage(schedulingMessage)">
+</div>
 
   </div>
 </template>
@@ -183,6 +196,72 @@ const majorsList = ref([]);
 const teachersList = ref([]);
 const modalErrorMessage = ref('');
 const isSubmittingModal = ref(false);
+// ... (existing imports and state) ...
+const schedulingStatus = ref(''); // '', 'running', 'success', 'error'
+const schedulingMessage = ref('');
+
+// ... (existing methods) ...
+
+const triggerScheduling = async () => {
+  if (!selectedSemesterId.value) {
+    errorMessage.value = '请先选择一个学期以进行排课。'; // Use existing errorMessage or a new one
+    return;
+  }
+  if (!window.confirm(`确定要为选定学期【${semesters.value.find(s=>s.id === selectedSemesterId.value)?.name}】开始自动排课吗？这将清空该学期现有排课结果并重新生成。`)) {
+    return;
+  }
+
+  schedulingStatus.value = 'running';
+  schedulingMessage.value = '';
+  errorMessage.value = ''; // Clear other messages
+  successMessage.value = '';
+
+  try {
+    const response = await axios.post(`${API_BASE_URL}/api/schedule/run/${selectedSemesterId.value}`);
+    schedulingStatus.value = 'success';
+
+    let summaryText = `排课完成： ${response.data.message}\n`;
+
+    // 检查 response.data.summary 是否存在且是对象
+    if (response.data.summary && typeof response.data.summary === 'object') {
+        const summary = response.data.summary; // 简化引用
+
+        // 使用后端实际返回的键名来访问数据
+        // 注意：这里的标签文字可以根据实际统计含义调整，比如processed_assignments可能翻译成“已处理的课程计划数”
+        summaryText += `已处理课程计划: ${summary.processed_assignments}, `; // 对应后端的 processed_assignments
+        summaryText += `生成课表条目: ${summary.generated_entries}条, `;      // 对应后端的 generated_entries
+        summaryText += `冲突: ${summary.conflicts}次, `;                   // 对应后端的 conflicts (这个是匹配的)
+        summaryText += `未完成课程计划: ${summary.unfinished_assignments}个.\n`; // 对应后端的 unfinished_assignments
+        summaryText += `数据库记录: 清空 ${summary.cleared_db_entries}条, 保存 ${summary.saved_db_entries}条.\n`; // 对应后端的 cleared_db_entries 和 saved_db_entries
+
+        // 检查后端的 errors 列表并显示
+        if(summary.errors && summary.errors.length > 0) {
+            summaryText += "错误/警告详情:\n" + summary.errors.join("\n"); // 对应后端的 errors
+        }
+    } else {
+         // 如果 summary 字段缺失或不是预期的格式，也给出提示
+         summaryText += "排课统计信息缺失或格式不正确。\n";
+         console.warn("Backend did not return a valid summary object:", response.data.summary);
+    }
+
+    schedulingMessage.value = summaryText;
+    successMessage.value = summaryText;
+    // Optionally refresh course plans if they might be affected or to show new status
+    // await fetchCoursePlans();
+  } catch (error) {
+    console.error('排课执行失败:', error);
+    schedulingStatus.value = 'error';
+    // Ensure error.response?.data?.message is handled gracefully
+    const errorMessageText = error.response?.data?.message || error.message || '未知错误';
+    schedulingMessage.value = `排课失败: ${errorMessageText}`;
+    errorMessage.value = schedulingMessage.value;
+  } finally {
+     if (schedulingStatus.value === 'running') schedulingStatus.value = '';
+  }
+};
+
+// ... 其余的代码保持不变 ...
+
 
 
 // --- Lifecycle Hooks ---
@@ -479,6 +558,10 @@ const handleSubmitPlan = async () => {
   max-width: 1200px;
   margin: auto;
 }
+/* In <style scoped> */
+.warning-button { background-color: #ffc107; color: #212529; }
+.warning-button:hover:not(:disabled) { background-color: #e0a800; }
+.icon-schedule::before { content: '📅'; /* Or a better icon */ }
 
 h2 {
   text-align: center;
