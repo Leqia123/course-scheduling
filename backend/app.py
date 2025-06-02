@@ -46,6 +46,103 @@ def get_db_connection():
         return None
 
 
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    user_type = data.get('userType')
+
+    if not username or not password or not user_type:
+        return jsonify({'message': 'All fields are required!'}), 400
+
+    if user_type not in ['student', 'teacher', 'admin']:
+        return jsonify({'message': 'Invalid user type.'}), 400
+
+    # 你的 users 表主键是 id (INT)，不是 UserID
+    # 并且字段名是 password, role (小写)
+    # 密码哈希是好的，但你的数据库 users 表是 password VARCHAR(255) NOT NULL, -- WARNING: Plain text password!
+    # 为了匹配你的数据库，我暂时移除了哈希，但强烈建议你在生产环境中使用哈希并修改表结构
+    # hashed_password = generate_password_hash(password)
+    plain_password = password  # 警告：明文密码
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # 检查你的 users 表的 id 是否是自增的，如果不是，你需要提供 id
+        # 假设 users.id 是自增的 (SERIAL) 或者你会在应用层面管理它
+        # 如果 users.id 不是自增，你需要从请求中获取或生成它
+        # 为了简单，假设它自增，但你的 schema 是 INT PRIMARY KEY
+        # 最好改成 SERIAL 或者在插入时提供一个唯一的 id
+
+        # 查找最大的 user_id，然后加1
+        cur.execute("SELECT MAX(id) FROM users")
+        max_id_result = cur.fetchone()
+        next_id = (max_id_result[0] if max_id_result[0] is not None else 0) + 1
+
+        cur.execute(
+            "INSERT INTO users (id, username, password, role) VALUES (%s, %s, %s, %s) RETURNING id",  # 注意字段名大小写
+            (next_id, username, plain_password, user_type)
+        )
+        user_id_returned = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({'message': 'User registered successfully!', 'user_id': user_id_returned}), 201
+    except psycopg2.IntegrityError:
+        if conn: conn.rollback()
+        return jsonify({'message': 'Username already exists or ID conflict!'}), 409
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"Error during registration: {e}")
+        return jsonify({'message': 'An error occurred during registration.'}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    user_type = data.get('userType')  # 前端发送的是 userType
+
+    if not username or not password or not user_type:
+        return jsonify({'message': 'All fields are required!'}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # 确保这里的 users 表列名与数据库一致 (username, password, role)
+        cur.execute(
+            "SELECT id, password, role FROM users WHERE username = %s",
+            (username,)
+        )
+        user_record = cur.fetchone()
+
+        # 再次强调，你的数据库存的是明文密码，所以直接比较
+        # if user_record and check_password_hash(user_record[1], password) and user_record[2] == user_type:
+        if user_record and user_record[1] == password and user_record[2] == user_type:
+            return jsonify({
+                'message': 'Login successful!',
+                'user_id': user_record[0],
+                'user_role': user_record[2],
+                'username': username,  # 将用户名返回给前端
+                'token': f'fake-jwt-token-for-{username}'  # 模拟token
+            }), 200
+        else:
+            return jsonify({'message': 'Invalid username, password, or user type.'}), 401
+    except Exception as e:
+        print(f"Error during login: {e}")
+        return jsonify({'message': 'An error occurred during login.'}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
 # --- Helper Function ---
 def get_id_from_name(cur, table_name, name_column, name_value, id_column='id', additional_conditions=None):
     """Generic function to get ID from a table by name, with optional additional conditions."""
