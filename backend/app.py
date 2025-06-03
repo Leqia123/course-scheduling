@@ -162,6 +162,18 @@ def get_id_from_name(cur, table_name, name_column, name_value, id_column='id', a
 
 # --- API Endpoints ---
 
+# 在 app.py 顶部添加导入
+import datetime
+import math # 用于向上取整
+
+# ... (其他导入)
+
+# 在 app.py 文件顶部导入必要的库
+import datetime
+import math # 用于向上取整
+
+# ... (其他 import 和 Flask app 设置) ...
+
 @app.route('/api/semesters', methods=['GET'])
 def get_semesters():
     conn = None
@@ -169,12 +181,46 @@ def get_semesters():
     try:
         conn = get_db_connection()
         if conn is None:
-            # Database connection error message handled in get_db_connection's logger
             return jsonify({"message": "数据库连接失败"}), 500
+        # 修改 SQL 查询，获取 start_date 和 end_date
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT id, name FROM semesters ORDER BY name DESC;")
-        semesters = cur.fetchall()
-        return jsonify(semesters)
+        cur.execute("SELECT id, name, start_date, end_date FROM semesters ORDER BY name DESC;")
+        semesters_data = cur.fetchall()
+
+        # 遍历结果，计算 total_weeks 并添加到每个 semester 字典中
+        processed_semesters = []
+        for semester in semesters_data:
+            start_date = semester.get('start_date')
+            end_date = semester.get('end_date')
+            total_weeks = 0 # 默认值
+
+            # 确保 start_date 和 end_date 是有效的日期对象
+            if isinstance(start_date, datetime.date) and isinstance(end_date, datetime.date) and end_date >= start_date:
+                # 计算天数差
+                delta = end_date - start_date
+                # 计算周数：(总天数 + 1) / 7，然后向上取整
+                # +1 是因为 delta.days 计算的是间隔天数，我们需要包含起始和结束两天
+                # 例如，从周一到周日，delta.days 是 6，但实际上是 7 天，即 1 周。 (6 + 1) / 7 = 1
+                # 从周一到下一个周一，delta.days 是 7，实际上是 8 天。 (7 + 1) / 7 = 1.14... -> ceil = 2 周
+                duration_days = delta.days + 1
+                total_weeks = math.ceil(duration_days / 7)
+            else:
+                # 如果日期无效或不合逻辑，记录日志（可选）
+                app.logger.warning(f"Semester ID {semester.get('id')} has invalid start/end dates: {start_date}, {end_date}. Setting total_weeks to 0.")
+
+            # 将计算得到的 total_weeks 添加到字典中
+            semester['total_weeks'] = total_weeks
+
+            # 从返回给前端的数据中移除原始日期，如果前端不需要的话
+            # 如果前端需要，可以保留
+            # del semester['start_date']
+            # del semester['end_date']
+
+            processed_semesters.append(semester)
+
+        # 返回处理后的列表
+        return jsonify(processed_semesters)
+
     except psycopg2.Error as e:
         app.logger.error(f"Database error in get_semesters: {e}")
         return jsonify({"message": "获取学期信息失败"}), 500
@@ -1138,16 +1184,26 @@ def export_teacher_timetable_excel(teacher_id, semester_id):
 
 
 # API to get timetable data for a specific major and semester
+# ... (其他 Flask 路由)
+
 @app.route('/api/timetables/major/<int:major_id>/semester/<int:semester_id>', methods=['GET'])
 def get_major_timetable(major_id, semester_id):
+    # 从查询参数中获取周数，如果未提供则为 None
+    # 使用 request.args.get('week', type=int) 来获取并尝试转换为整数
+    # 如果 'week' 参数不存在或无法转换，selected_week 将是 None
+    selected_week = request.args.get('week', type=int, default=None)
+    app.logger.debug(f"API called: /api/timetables/major/{major_id}/semester/{semester_id}")
+    app.logger.debug(f"Received 'week' parameter: {selected_week} (Type: {type(selected_week)})")
     conn = None
-    cur = None  # Ensure cur is initialized to None
+    cur = None
     try:
         conn = get_db_connection()
         if conn is None: return jsonify({"message": "数据库连接失败"}), 500
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        # 使用 DictCursor 或 RealDictCursor 以便按列名访问
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Use time_slots based on your schema
+        # 基础查询语句，连接必要的表以获取所需信息
+        # 注意：你的原始查询缺少了 JOIN courses, teachers, users, classrooms 获取名称的部分，这里补上
         query = """
             SELECT
                 te.id,
@@ -1159,57 +1215,72 @@ def get_major_timetable(major_id, semester_id):
                 te.timeslot_id,
                 te.week_number,
                 te.assignment_id,
-                -- Assuming time_slots table has day_of_week, start_time, and end_time fields
                 ts.day_of_week,
+                ts.period, -- 保留 period 用于排序和定位单元格
                 ts.start_time,
                 ts.end_time,
-                c.name as course_name, -- Corrected alias from course_name to name based on courses table
-                u.username as teacher_name, -- Corrected alias from teacher_name to username based on users table
-                cr.building || '-' || cr.room_number as classroom_name -- Concatenate building and room
+                c.name as course_name,
+                c.course_type, -- 添加课程类型
+                u.username as teacher_name,
+                cl.building || '-' || cl.room_number as classroom_name, -- classroom_name 已在你的原代码中
+                m.name as major_name -- 如果需要显示专业名（虽然在此视图可能不需要）
             FROM timetable_entries te
-            JOIN time_slots ts ON te.timeslot_id = ts.id -- Correct table name
+            JOIN time_slots ts ON te.timeslot_id = ts.id
             JOIN courses c ON te.course_id = c.id
             JOIN teachers t ON te.teacher_id = t.id
-            JOIN users u ON t.user_id = u.id -- Join to get teacher username
-            JOIN classrooms cr ON te.classroom_id = cr.id
+            JOIN users u ON t.user_id = u.id
+            JOIN classrooms cl ON te.classroom_id = cl.id
+            JOIN majors m ON te.major_id = m.id -- 加入 majors 表
             WHERE te.major_id = %s AND te.semester_id = %s
-            ORDER BY te.week_number, ts.day_of_week, ts.period; -- Reordered ORDER BY for typical weekly view
         """
-        cur.execute(query, (major_id, semester_id))
+        params = [major_id, semester_id]
+        if selected_week is not None:
+            app.logger.debug(f"Applying week filter: week_number = {selected_week}")
+        # 如果提供了 week 参数，则添加到查询条件中
+        if selected_week is not None:
+            # 检查 week_number 是否大于 0，防止无效查询
+            if selected_week > 0:
+                query += " AND te.week_number = %s"
+                params.append(selected_week)
+            else:
+                # 如果提供了无效周数 (如 0 或负数)，返回空结果比较安全
+                app.logger.warning(f"Invalid week number requested: {selected_week}")
+                return jsonify([]), 200 # 或者返回错误信息
+
+        # 添加排序，确保课表顺序正确 (按天、按节次)
+        query += " ORDER BY ts.day_of_week, ts.period;" # 使用 time_slots 的 period 排序
+        app.logger.debug(f"Final SQL query: {query}")
+        app.logger.debug(f"Query parameters: {tuple(params)}")
+        cur.execute(query, tuple(params)) # 将参数列表转为元组
 
         fetched_entries = cur.fetchall()
-
-        # --- Convert datetime.time objects to strings for JSON serialization ---
+        app.logger.debug(f"Fetched {len(fetched_entries)} entries from database.")  # <--- 这行
+        # --- 时间格式转换 ---
         entries_for_json = []
         for row in fetched_entries:
-            entry = dict(row)  # Convert DictRow to plain dict
-
-            # Check and convert time objects
+            # RealDictCursor 返回的是类字典对象，直接用或转成普通 dict
+            entry = dict(row)
             if 'start_time' in entry and isinstance(entry['start_time'], datetime.time):
                 entry['start_time'] = entry['start_time'].strftime('%H:%M:%S')
-
             if 'end_time' in entry and isinstance(entry['end_time'], datetime.time):
                 entry['end_time'] = entry['end_time'].strftime('%H:%M:%S')
-
             entries_for_json.append(entry)
-        # --- End of Conversion ---
+        # --- 结束转换 ---
 
-        cur.close()  # Close cursor
-
-        return jsonify(entries_for_json), 200  # Return the converted list
+        cur.close()
+        app.logger.debug(f"Returning {len(entries_for_json)} entries in JSON response.")
+        return jsonify(entries_for_json), 200
 
     except psycopg2.Error as e:
-        app.logger.error(f"Database error fetching timetable for major {major_id} semester {semester_id}: {e}",
-                         exc_info=True)
-        return jsonify({"error": "获取专业课表数据失败"}), 500  # User-friendly error
+        app.logger.error(f"Database error fetching timetable for major {major_id} semester {semester_id} week {selected_week}: {e}", exc_info=True)
+        return jsonify({"message": "获取专业课表数据失败"}), 500
     except Exception as e:
-        app.logger.error(
-            f"An unexpected error occurred fetching major timetable for major {major_id} semester {semester_id}: {e}",
-            exc_info=True)
-        return jsonify({"error": "获取专业课表数据时发生内部错误"}), 500  # User-friendly error
+        app.logger.error(f"Unexpected error fetching major timetable major {major_id} semester {semester_id} week {selected_week}: {e}", exc_info=True)
+        return jsonify({"message": "获取专业课表数据时发生内部错误"}), 500
     finally:
         if cur: cur.close()
         if conn: conn.close()
+
 
 
 # API to export timetable data for a specific major and semester to Excel
