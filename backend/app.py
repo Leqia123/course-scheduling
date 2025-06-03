@@ -416,7 +416,7 @@ def upload_course_plans():
 
                 # Get Teacher ID (Need user_id first)
                 user_id = get_id_from_name(cur, 'users', 'username', teacher_name, id_column='id',
-                                           additional_conditions={'role': 'Teacher'})
+                                           additional_conditions={'role': 'teacher'})
                 if user_id is None:
                     error_messages.append(
                         f"Row {index + 2}: 教师 '{teacher_name}' (角色: Teacher) 未在 users 表中找到。已跳过。")
@@ -650,7 +650,7 @@ def get_teachers_list():
         SELECT t.id, u.username AS name
         FROM teachers t
         JOIN users u ON t.user_id = u.id
-        WHERE u.role = 'Teacher'
+        WHERE u.role = 'teacher'
         ORDER BY u.username;
         """
         cur.execute(query)

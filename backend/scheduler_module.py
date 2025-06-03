@@ -25,6 +25,7 @@ except ImportError:
 # ==================================
 # 2. 数据模型 (保持不变)
 # ==================================
+# ... (你的数据模型定义保持不变) ...
 Semester = namedtuple('Semester', ['id', 'name', 'start_date', 'end_date', 'total_weeks'])
 Major = namedtuple('Major', ['id', 'name'])
 Teacher = namedtuple('Teacher', ['id', 'user_id', 'name'])
@@ -40,8 +41,9 @@ TimetableEntry = namedtuple('TimetableEntry',
 
 
 # ==================================
-# 3. 数据加载函数 (修改: 使用 get_connection_func)
+# 3. 数据加载函数 (保持不变)
 # ==================================
+# ... (你的 load_data_from_db 函数保持不变) ...
 def load_data_from_db(get_connection_func):
     """从数据库加载所有基础数据"""
     print("SCHEDULER: 开始从数据库加载数据...")
@@ -139,28 +141,41 @@ def load_data_from_db(get_connection_func):
 # ==================================
 # 4. 辅助函数 (保持不变)
 # ==================================
+# ... (你的 find_timeslot_id, check_constraints, find_available_classroom 函数保持不变) ...
 def find_timeslot_id(day_str, period_num, all_data):
     return all_data['timeslot_lookup'].get((day_str, period_num))
 
 
+# 注意：check_constraints 需要使用传入的全局状态
 def check_constraints(timetable_state, assignment, week, timeslot_id, classroom_id, all_data):
     teacher_id = assignment.teacher_id
     major_id = assignment.major_id
-    if (teacher_id, week, timeslot_id) in timetable_state['teacher_schedule']: return False
-    if (classroom_id, week, timeslot_id) in timetable_state['classroom_schedule']: return False
-    if (major_id, week, timeslot_id) in timetable_state['major_schedule']: return False
+    # 检查全局状态中教师、教室、专业是否已被占用
+    if (teacher_id, week, timeslot_id) in timetable_state['teacher_schedule']:
+        # print(f"[CONFLICT] Teacher {teacher_id} busy week {week} slot {timeslot_id}")
+        return False
+    if (classroom_id, week, timeslot_id) in timetable_state['classroom_schedule']:
+        # print(f"[CONFLICT] Classroom {classroom_id} busy week {week} slot {timeslot_id}")
+        return False
+    if (major_id, week, timeslot_id) in timetable_state['major_schedule']:
+        # print(f"[CONFLICT] Major {major_id} busy week {week} slot {timeslot_id}")
+        return False
     return True
 
 
+# 注意：find_available_classroom 需要使用传入的全局状态
 def find_available_classroom(timetable_state, assignment, week, timeslot_id, all_data):
     required_capacity = assignment.expected_students
     course = all_data['courses'].get(assignment.course_id)
     is_lab_course = course and course.course_type == '实验课'
     preferred_type_available, other_type_available = [], []
+
+    # 确定在当前周次和时间段已经被占用的教室集合，检查全局状态
     busy_classrooms = {cid for (cid, w, tid) in timetable_state['classroom_schedule'] if
                        w == week and tid == timeslot_id}
 
     for classroom_id, classroom in all_data['classrooms'].items():
+        # 检查教室是否在全局状态中已被占用
         if classroom_id in busy_classrooms: continue
         if classroom.capacity < required_capacity: continue
         classroom_type_match = (is_lab_course and classroom.type == '实验室') or \
@@ -178,6 +193,7 @@ def find_available_classroom(timetable_state, assignment, week, timeslot_id, all
 # ==================================
 # 5. 自动生成初始模板函数 (保持不变)
 # ==================================
+# ... (你的 generate_initial_template 函数保持不变) ...
 def generate_initial_template(assignments_dict, all_data):
     # print("SCHEDULER:   正在根据可用任务自动生成初始周模板...")
     template_structure = [
@@ -278,10 +294,10 @@ def generate_initial_template(assignments_dict, all_data):
 
 
 # ==================================
-# 6. 基于模板的排课执行函数 (保持不变)
+# 6. 基于模板的排课执行函数 (修改: 接收并更新全局状态)
 # ==================================
 def schedule_with_generated_template(assignments_for_major, current_semester, current_major, all_data, initial_template,
-                                     unscheduled_pool_ids):
+                                     unscheduled_pool_ids, global_timetable_state):  # <-- 添加 global_timetable_state 参数
     # print(f"\nSCHEDULER: ===== 开始为专业 '{current_major.name}' 基于模板排课 (学期: {current_semester.name}, {current_semester.total_weeks} 周) =====")
     total_weeks = current_semester.total_weeks
     if not total_weeks or total_weeks <= 0:
@@ -295,6 +311,7 @@ def schedule_with_generated_template(assignments_for_major, current_semester, cu
                 'teacher_name': teacher.name if teacher else '未知教师',
                 'remaining_sessions': course.total_sessions if course else 0
             })
+        # 注意：这里不返回 updated_global_state，因为它是在调用者中管理的
         return {'schedule': [], 'unscheduled_details': unscheduled_details_on_error, 'conflicts': []}
 
     assignment_sessions_remaining = {}
@@ -306,13 +323,9 @@ def schedule_with_generated_template(assignments_for_major, current_semester, cu
     current_template_schedule = initial_template.copy()
     final_schedule = []
     conflicts_log = []
-    # This state needs to be managed globally if multiple majors are scheduled concurrently affecting same teachers/classrooms
-    # For sequential per-major scheduling, this can be reset or passed if teacher/classroom state from previous majors should affect current.
-    # The original script implies this state is per-major, but for a global schedule, it should be truly global.
-    # For now, assuming the main runner function (run_full_scheduling_process) handles the "global_timetable_state" correctly across majors.
-    # Let's assume it's passed in and updated by this function.
-    global_timetable_state = {'teacher_schedule': set(), 'classroom_schedule': set(),
-                              'major_schedule': set()}  # This might need to be passed from run_full_scheduling_process
+
+    # --- 移除这一行，不再在这里初始化局部状态 ---
+    # global_timetable_state = {'teacher_schedule': set(), 'classroom_schedule': set(), 'major_schedule': set()}
 
     day_order = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
     sorted_template_slots = sorted(
@@ -356,27 +369,35 @@ def schedule_with_generated_template(assignments_for_major, current_semester, cu
                 timeslot_id = find_timeslot_id(day_str, period_num, all_data)
                 if not timeslot_id: continue
 
+                # 调用辅助函数时，传递全局状态
                 suitable_classroom_id = find_available_classroom(global_timetable_state, assignment, week, timeslot_id,
                                                                  all_data)
                 if suitable_classroom_id:
+                    # 调用约束检查时，传递全局状态
                     if check_constraints(global_timetable_state, assignment, week, timeslot_id, suitable_classroom_id,
                                          all_data):
                         entry = TimetableEntry(None, current_semester.id, assignment.major_id, assignment.course_id,
                                                assignment.teacher_id, suitable_classroom_id, timeslot_id, week,
                                                current_assignment_id)
                         final_schedule.append(entry)
+
+                        # --- 成功排课后，更新传入的全局状态 ---
                         global_timetable_state['teacher_schedule'].add((assignment.teacher_id, week, timeslot_id))
                         global_timetable_state['classroom_schedule'].add((suitable_classroom_id, week, timeslot_id))
                         global_timetable_state['major_schedule'].add((assignment.major_id, week, timeslot_id))
+                        # --- 更新结束 ---
+
                         assignment_sessions_remaining[current_assignment_id] -= 1
                         # if assignment_sessions_remaining[current_assignment_id] == 0:
                         # course_name = all_data['courses'].get(assignment.course_id, '?').name
                         # print(f"  **SCHEDULER: 专业 {current_major.name}: 任务 {current_assignment_id} ({course_name}) 在第 {week} 周完成。**")
                     else:
+                        # 如果有约束冲突，记录日志，但不更新全局状态（因为没有排成功）
                         conflicts_log.append(
                             {'major_id': assignment.major_id, 'week': week, 'day': day_str, 'period': period_num,
                              'assignment_id': current_assignment_id, 'reason': "约束冲突"})
                 else:
+                    # 如果找不到教室，记录日志，但不更新全局状态
                     conflicts_log.append(
                         {'major_id': assignment.major_id, 'week': week, 'day': day_str, 'period': period_num,
                          'assignment_id': current_assignment_id,
@@ -396,13 +417,14 @@ def schedule_with_generated_template(assignments_for_major, current_semester, cu
                 {'assignment_id': assign_id, 'course_name': course_name, 'teacher_name': teacher_name,
                  'remaining_sessions': remaining})
     # print(f"SCHEDULER: ===== 专业 '{current_major.name}' 排课完成。生成课表条目: {len(final_schedule)}, 冲突/未安排记录: {len(conflicts_log)}, 未完成任务数: {len(unscheduled_final)} =====")
-    return {'schedule': final_schedule, 'unscheduled_details': unscheduled_final, 'conflicts': conflicts_log,
-            'updated_global_state': global_timetable_state}
+    # 注意：这里不再返回 updated_global_state，因为已经直接修改了传入的参数
+    return {'schedule': final_schedule, 'unscheduled_details': unscheduled_final, 'conflicts': conflicts_log}
 
 
 # ==================================
-# 7. 导出到 Excel 函数 (修改: 输出 BytesIO, 可选筛选)
+# 7. 导出到 Excel 函数 (保持不变)
 # ==================================
+# ... (你的 Excel 导出函数保持不变) ...
 def sanitize_sheet_name(name):
     name = re.sub(r'[\\/*?:"<>|\[\]]', '_', name)
     return name[:31]
@@ -620,8 +642,9 @@ def generate_excel_report_for_send_file(schedule_entries, all_data, semester,
 
 
 # ==================================
-# 8. 数据库操作函数 (修改: 使用 get_connection_func)
+# 8. 数据库操作函数 (保持不变)
 # ==================================
+# ... (你的 clear_db_for_semester 和 save_schedule_to_db 函数保持不变) ...
 def clear_db_for_semester(semester_id, get_connection_func):
     conn = None
     try:
@@ -644,10 +667,6 @@ def clear_db_for_semester(semester_id, get_connection_func):
         if conn: conn.close()
 
 
-# scheduler_module.py
-
-# ... (其他代码保持不变) ...
-
 def save_schedule_to_db(schedule_entries, get_connection_func):
     if not schedule_entries: return 0
     conn_save = None
@@ -661,7 +680,7 @@ def save_schedule_to_db(schedule_entries, get_connection_func):
         insert_query = """
             INSERT INTO timetable_entries
             (semester_id, major_id, course_id, teacher_id, classroom_id, timeslot_id, week_number, assignment_id)
-            VALUES %s 
+            VALUES %s
         """
         # --- 修改结束 ---
 
@@ -670,8 +689,8 @@ def save_schedule_to_db(schedule_entries, get_connection_func):
              e.assignment_id)
             for e in schedule_entries
         ]
-        print("[DEBUG] 插入语句 (用于 execute_values):", insert_query)  # 确认修改后的语句
-        print("[DEBUG] 首条数据:", data_to_insert[0] if data_to_insert else "无数据")
+        # print("[DEBUG] 插入语句 (用于 execute_values):", insert_query)  # 确认修改后的语句
+        # print("[DEBUG] 首条数据:", data_to_insert[0] if data_to_insert else "无数据")
 
         if data_to_insert:
             from psycopg2.extras import execute_values
@@ -701,11 +720,8 @@ def save_schedule_to_db(schedule_entries, get_connection_func):
         if conn_save: conn_save.close()
 
 
-# ... (其他代码保持不变) ...
-
-
 # ==================================
-# 9. 主排课流程函数
+# 9. 主排课流程函数 (修改: 传递全局状态)
 # ==================================
 def run_full_scheduling_process(target_semester_id, get_connection_func):
     """
@@ -763,10 +779,11 @@ def run_full_scheduling_process(target_semester_id, get_connection_func):
         # print(f"SCHEDULER: 已清空 {cleared_count} 条旧排课记录。")
 
         all_final_schedule_entries_for_semester = []
-        # This global_timetable_state should be shared across all majors scheduled in this run
-        # to prevent overall conflicts (e.g., same teacher in two different majors at same time)
+
+        # --- 在这里初始化一次全局状态 ---
         master_global_timetable_state = {'teacher_schedule': set(), 'classroom_schedule': set(),
                                          'major_schedule': set()}
+        # --- 初始化结束 ---
 
         sorted_major_ids = sorted(list(majors_in_semester), key=lambda mid: all_data['majors'].get(mid, Major(id=mid,
                                                                                                               name=f"UnknownMajor{mid}")).name)
@@ -792,53 +809,20 @@ def run_full_scheduling_process(target_semester_id, get_connection_func):
             #     summary["details"].append(major_detail_msg)
             #     continue
 
-            # Pass a copy of master_global_timetable_state or manage it carefully
-            # For now, let's assume schedule_with_generated_template correctly updates its local copy
-            # and returns what it used. The results should then be merged back.
-            # This part is tricky for true global conflict resolution.
-            # A simpler model is that each major is scheduled independently for its own students,
-            # and teacher/classroom conflicts are checked against a growing master list.
-
-            # For schedule_with_generated_template to use/update a truly global state:
-            # It would need to take master_global_timetable_state as an argument and modify it directly,
-            # or return the new additions to teacher/classroom schedules to be merged.
-            # The original script's `global_timetable_state` was re-initialized in `schedule_with_generated_template`
-            # which is fine for isolated major scheduling but not for shared resources like teachers.
-            # Let's modify `schedule_with_generated_template` to accept and update `master_global_timetable_state`.
-            # No, `schedule_with_generated_template` uses its own `global_timetable_state`.
-            # This means it checks constraints based on what it has scheduled *for that major in that run*.
-            # To handle cross-major teacher/classroom conflicts, the `master_global_timetable_state`
-            # needs to accumulate all successful bookings.
-
-            # Simplified approach: The `check_constraints` needs to check against `master_global_timetable_state`.
-            # And `find_available_classroom` also needs to check against `master_global_timetable_state`.
-            # And successful bookings are added to `master_global_timetable_state`.
-            # This means `schedule_with_generated_template` needs `master_global_timetable_state` as input.
-
-            # For now, let's follow the script's original logic where `global_timetable_state` is effectively per-major within its run.
-            # This means the script doesn't inherently prevent a teacher being in two majors at once if scheduled sequentially.
-            # This is a limitation of the original algorithm's structure if not handled by the main loop.
-            # To fix, `schedule_with_generated_template` should get `master_global_timetable_state`
-            # and its `check_constraints` and `find_available_classroom` should use that.
-            # And when a class is scheduled, it should update `master_global_timetable_state`.
-
-            # Let's assume the provided `schedule_with_generated_template` is used as is for now.
-            # The conflicts it logs are internal to its attempt for that major.
+            # --- 调用排课函数时，传递 master_global_timetable_state ---
             schedule_result_obj = schedule_with_generated_template(
                 assignments_for_this_major, current_semester,
-                current_major if current_major else Major(id=major_id, name=major_name),  # ensure current_major exists
-                all_data, initial_template, unscheduled_pool
-                # master_global_timetable_state # If passing for global check
+                current_major if current_major else Major(id=major_id, name=major_name),
+                all_data, initial_template, unscheduled_pool,
+                master_global_timetable_state  # <-- 传递全局状态
             )
+            # --- 调用结束 ---
 
             major_schedule = schedule_result_obj.get('schedule', [])
             all_final_schedule_entries_for_semester.extend(major_schedule)
 
-            # If using master_global_timetable_state, update it here based on major_schedule
-            # for entry in major_schedule:
-            #    master_global_timetable_state['teacher_schedule'].add((entry.teacher_id, entry.week_number, entry.timeslot_id))
-            #    master_global_timetable_state['classroom_schedule'].add((entry.classroom_id, entry.week_number, entry.timeslot_id))
-            #    master_global_timetable_state['major_schedule'].add((entry.major_id, entry.week_number, entry.timeslot_id))
+            # 这里不再需要手动更新 master_global_timetable_state，因为 schedule_with_generated_template
+            # 函数内部已经直接修改了传入的 master_global_timetable_state 对象
 
             num_scheduled_major = len(major_schedule)
             num_conflicts_major = len(schedule_result_obj.get('conflicts', []))
