@@ -126,7 +126,7 @@ const handleLogin = async () => {
     localStorage.setItem('token', response.data.token);
     localStorage.setItem('userRole', response.data.user_role);
     localStorage.setItem('username', username.value); // 存储用户名
-
+    localStorage.setItem('user_id', response.data.user_id);
     // 根据后端返回的角色进行跳转
     if (response.data.user_role === 'admin') {
       router.push('/admin');
