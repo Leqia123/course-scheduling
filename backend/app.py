@@ -1529,6 +1529,136 @@ def export_student_timetable_excel(user_id, semester_id):
     finally:
         if conn: conn.close() # Ensure connection is closed
 # Add a root route or basic info route if desired
+@app.route('/api/timetables/teacher-dashboard/<int:user_id>/semester/<int:semester_id>', methods=['GET'])
+def get_teacher_weekly_timetable(user_id, semester_id):
+    """
+    获取指定用户(教师)在指定学期指定周次的课表。
+    需要查询参数 week=<int:week_number>
+    """
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"message": "数据库连接失败"}), 500
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # --- Step 1: Find the teacher_id from user_id ---
+        # First, verify the user exists and is a teacher (Good practice)
+        cur.execute("SELECT id, role FROM users WHERE id = %s", (user_id,))
+        user_info = cur.fetchone()
+
+        if not user_info:
+             cur.close()
+             return jsonify({"error": "用户不存在"}), 404
+
+        if user_info['role'].lower() != 'teacher':
+             cur.close()
+             return jsonify({"error": "用户不是教师类型"}), 403 # Forbidden if not a teacher
+
+        # Now find the corresponding teacher_id in the teachers table
+        # Note: Assuming a 1-to-1 relationship between users.id and teachers.user_id
+        cur.execute("SELECT id FROM teachers WHERE user_id = %s", (user_id,))
+        teacher_profile = cur.fetchone()
+
+        if not teacher_profile:
+            cur.close()
+            return jsonify({"error": "找不到该用户关联的教师档案"}), 404
+
+        teacher_id_from_user = teacher_profile['id'] # Get the actual teacher_id
+
+
+        # --- Step 2: Get the week number from query parameters ---
+        week_number = request.args.get('week', type=int)
+        if week_number is None:
+            cur.close()
+            return jsonify({"error": "缺少周次参数 (week)"}), 400
+
+
+        # --- Step 3: Execute the SQL query with semester_id, teacher_id, and week_number filtering ---
+        # Modify the query to filter by teacher_id and week_number
+        query = """
+        SELECT te.id, te.week_number, te.assignment_id,
+               s.name as semester_name,
+               m.id as major_id, m.name as major_name,
+               c.id as course_id, c.name as course_name, c.course_type,
+               u.username as teacher_name, t.id as teacher_id,
+               cl.id as classroom_id, cl.building || '-' || cl.room_number as classroom_name,
+               ts.id as timeslot_id, ts.day_of_week, ts.period, ts.start_time, ts.end_time -- TIME fields
+        FROM timetable_entries te
+        JOIN semesters s ON te.semester_id = s.id
+        LEFT JOIN majors m ON te.major_id = m.id -- Use LEFT JOIN for major
+        JOIN courses c ON te.course_id = c.id
+        JOIN teachers t ON te.teacher_id = t.id
+        JOIN users u ON t.user_id = u.id
+        LEFT JOIN classrooms cl ON te.classroom_id = cl.id -- Use LEFT JOIN for classroom
+        JOIN time_slots ts ON te.timeslot_id = ts.id
+        WHERE te.semester_id = %s AND te.teacher_id = %s AND te.week_number = %s -- ADD week_number filter
+        ORDER BY ts.day_of_week, ts.period; -- Order by day/period within the selected week
+        """
+        # Pass the parameters in the correct order for the query
+        cur.execute(query, (semester_id, teacher_id_from_user, week_number))
+
+        fetched_entries = cur.fetchall()
+
+        # --- Step 4: Convert datetime.time objects to strings and map day_of_week ---
+        entries_for_json = []
+        # Map DB day names (e.g., 'Monday') to frontend display names (e.g., '周一')
+        # Adjust this map if your DB stores days differently
+        day_map = {
+             'Monday': '周一', 'Tuesday': '周二', 'Wednesday': '周三',
+             'Thursday': '周四', 'Friday': '周五', 'Saturday': '周六', 'Sunday': '周日'
+        }
+
+        for row in fetched_entries:
+            entry = dict(row)
+
+            # Map day_of_week
+            if 'day_of_week' in entry and entry['day_of_week'] in day_map:
+                 entry['day_of_week'] = day_map[entry['day_of_week']]
+            # Else: assume DB already stores '周一' etc. or frontend handles other formats
+
+            # Format time fields
+            if 'start_time' in entry and isinstance(entry['start_time'], datetime.time):
+                entry['start_time'] = entry['start_time'].strftime('%H:%M:%S')
+            # Ensure it's a string even if originally None/null from DB
+            elif 'start_time' in entry and entry['start_time'] is None:
+                 entry['start_time'] = None # Or empty string if preferred
+
+
+            if 'end_time' in entry and isinstance(entry['end_time'], datetime.time):
+                entry['end_time'] = entry['end_time'].strftime('%H:%M:%S')
+            # Ensure it's a string even if originally None/null from DB
+            elif 'end_time' in entry and entry['end_time'] is None:
+                 entry['end_time'] = None # Or empty string if preferred
+
+
+            # Handle potential None values from LEFT JOINs gracefully for frontend display
+            if entry.get('major_name') is None:
+                entry['major_name'] = '全校公共课' # Or another suitable indicator
+            if entry.get('classroom_name') is None:
+                entry['classroom_name'] = '待定' # Or another suitable indicator
+
+
+            entries_for_json.append(entry)
+
+        cur.close()
+
+        return jsonify(entries_for_json), 200
+
+    except psycopg2.Error as e:
+        app.logger.error(f"API: DB error fetching teacher weekly timetable for user {user_id}, semester {semester_id}, week {week_number}: {e}",
+                         exc_info=True)
+        return jsonify({"message": "获取教师课表数据失败"}), 500
+    except Exception as e:
+        app.logger.error(
+            f"API: An unexpected error occurred fetching teacher weekly timetable for user {user_id}, semester {semester_id}, week {week_number}: {e}",
+            exc_info=True)
+        return jsonify({"message": f"获取教师课表数据时发生内部错误"}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
 @app.route('/')
 def index():
     return "Timetable Scheduling Backend API is running."
