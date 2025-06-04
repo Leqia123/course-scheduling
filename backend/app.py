@@ -1340,7 +1340,194 @@ def export_major_timetable_excel(major_id, semester_id):
         app.logger.error(f"API Export: Error exporting major timetable: {e}", exc_info=True)
         return jsonify({"message": f"导出专业课表Excel失败: {str(e)}"}), 500
 
+@app.route('/api/timetables/student/<int:user_id>/semester/<int:semester_id>', methods=['GET'])
+def get_student_timetable(user_id, semester_id):
+    """
+    Fetches timetable entries for a specific student (identified by user_id),
+    a specific semester, and optionally a specific week.
+    """
+    # Get week from query parameters
+    selected_week = request.args.get('week', type=int, default=None)
+    app.logger.debug(f"API called: /api/timetables/student/{user_id}/semester/{semester_id}")
+    app.logger.debug(f"Received 'week' parameter: {selected_week} (Type: {type(selected_week)})")
 
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None: return jsonify({"message": "数据库连接失败"}), 500
+        cur = conn.cursor(cursor_factory=RealDictCursor) # Or DictCursor
+
+        # 1. Verify user exists and is a student, and get their major_id
+        cur.execute("""
+            SELECT s.major_id
+            FROM students s
+            JOIN users u ON s.user_id = u.id
+            WHERE u.id = %s AND u.role = 'student'
+        """, (user_id,))
+        student_info = cur.fetchone()
+
+        if not student_info:
+            # User not found, or not a student, or student record missing
+            app.logger.warning(f"Attempted to get student timetable for user_id {user_id}, but user not found as a student or major not linked.")
+            return jsonify({"message": "未找到您的学生信息或未指定专业，无法获取课表。"}), 404
+
+        student_major_id = student_info['major_id']
+
+        # 2. Fetch timetable entries using the student's major_id, semester_id, and week filter
+        query = """
+            SELECT
+                te.id, te.semester_id, te.major_id, te.course_id, te.teacher_id, te.classroom_id, te.timeslot_id, te.week_number, te.assignment_id,
+                ts.day_of_week, ts.period, ts.start_time, ts.end_time,
+                c.name as course_name, c.course_type,
+                u.username as teacher_name, -- Include teacher name
+                cl.building || '-' || cl.room_number as classroom_name
+                -- No need for major_name in student view result, but could fetch it if needed
+            FROM timetable_entries te
+            JOIN time_slots ts ON te.timeslot_id = ts.id
+            JOIN courses c ON te.course_id = c.id
+            JOIN teachers t ON te.teacher_id = t.id
+            JOIN users u ON t.user_id = u.id -- Join to get teacher username
+            JOIN classrooms cl ON te.classroom_id = cl.id
+            WHERE te.major_id = %s AND te.semester_id = %s
+        """
+        params = [student_major_id, semester_id]
+
+        if selected_week is not None and selected_week > 0:
+             app.logger.debug(f"Applying week filter: week_number = {selected_week}")
+             query += " AND te.week_number = %s"
+             params.append(selected_week)
+        elif selected_week is not None and selected_week <= 0:
+             app.logger.warning(f"Invalid week number requested: {selected_week}. Returning empty.")
+             return jsonify([]), 200 # Return empty if week is invalid
+
+        # Add sorting for correct timetable display order
+        query += " ORDER BY te.week_number, ts.day_of_week, ts.period;" # Order by week, then day, then period
+
+        app.logger.debug(f"Final SQL query for student timetable: {query}")
+        app.logger.debug(f"Query parameters for student timetable: {tuple(params)}")
+        cur.execute(query, tuple(params))
+
+        fetched_entries = cur.fetchall()
+        app.logger.debug(f"Fetched {len(fetched_entries)} entries for student timetable.")
+
+        # --- Time format conversion ---
+        entries_for_json = []
+        for row in fetched_entries:
+            entry = dict(row) # Convert RealDictRow to dict
+            if 'start_time' in entry and isinstance(entry['start_time'], datetime.time):
+                entry['start_time'] = entry['start_time'].strftime('%H:%M:%S')
+            if 'end_time' in entry and isinstance(entry['end_time'], datetime.time):
+                entry['end_time'] = entry['end_time'].strftime('%H:%M:%S')
+            entries_for_json.append(entry)
+        # --- End conversion ---
+
+        cur.close() # Close cursor
+
+        return jsonify(entries_for_json), 200
+
+    except psycopg2.Error as e:
+        app.logger.error(f"Database error fetching student timetable for user {user_id} semester {semester_id} week {selected_week}: {e}", exc_info=True)
+        return jsonify({"message": "获取个人课表数据失败"}), 500
+    except Exception as e:
+        app.logger.error(f"Unexpected error fetching student timetable user {user_id} semester {semester_id} week {selected_week}: {e}", exc_info=True)
+        return jsonify({"message": "获取个人课表数据时发生内部错误"}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+# --- NEW: Student Timetable Export Endpoint ---
+@app.route('/api/timetables/export/student/<int:user_id>/semester/<int:semester_id>', methods=['GET'])
+def export_student_timetable_excel(user_id, semester_id):
+    """
+    Exports the full semester timetable for a specific student (identified by user_id).
+    """
+    try:
+        conn = get_db_connection()
+        if conn is None: return jsonify({"message": "数据库连接失败"}), 500
+        cur = conn.cursor() # Use basic cursor first
+
+        # 1. Verify user exists and is a student, get major_id and username
+        cur.execute("""
+            SELECT s.major_id, u.username
+            FROM students s
+            JOIN users u ON s.user_id = u.id
+            WHERE u.id = %s AND u.role = 'student'
+        """, (user_id,))
+        student_info = cur.fetchone() # student_info will be (major_id, username)
+
+        if not student_info:
+            app.logger.warning(f"Attempted export for user_id {user_id}, but user not found as a student or major not linked.")
+            return jsonify({"message": "未找到您的学生信息或未指定专业，无法导出课表。"}), 404
+
+        student_major_id = student_info[0]
+        student_username = student_info[1]
+
+        # Load all necessary lookup data (including semesters, majors, teachers, etc.)
+        # load_data_from_db returns dictionaries keyed by ID, e.g., {'semesters': {id: semester_obj, ...}}
+        all_data = scheduler_module.load_data_from_db(get_db_connection) # Pass the connection function
+
+        current_semester = all_data.get('semesters', {}).get(semester_id)
+        if not current_semester:
+             # This should ideally not happen if semester_id is from frontend selects, but check anyway
+             return jsonify({"message": "学期信息未找到，无法导出"}), 404
+
+        # 2. Fetch *all* timetable entries for this student's major and semester
+        # Use DictCursor for fetching raw data to pass to TimetableEntry constructor
+        cur_dict = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur_dict.execute("""
+            SELECT id, semester_id, major_id, course_id, teacher_id, classroom_id, timeslot_id, week_number, assignment_id
+            FROM timetable_entries
+            WHERE semester_id = %s AND major_id = %s
+            ORDER BY week_number, timeslot_id; -- Consistent ordering
+            """, (semester_id, student_major_id)) # Filter by student's major_id
+        raw_entries = cur_dict.fetchall()
+        cur_dict.close() # Close dict cursor
+
+        conn.close() # Close main connection
+
+        if not raw_entries:
+            return jsonify({"message": "当前学期无排课数据可供导出，或学期周数未设置"}), 404
+
+        # Convert fetched dicts to TimetableEntry objects (assuming it's a namedtuple/dataclass)
+        schedule_entries_for_export = [scheduler_module.TimetableEntry(**row) for row in raw_entries]
+
+        # Generate Excel report. Pass student_major_id or user_id if generate_excel_report_for_send_file
+        # needs to filter or format specifically for a student (e.g., hide other majors' data if the raw_entries included them).
+        # Given the query filters by major_id, the generator just needs the list and lookup data.
+        excel_buffer = scheduler_module.generate_excel_report_for_send_file(
+            schedule_entries_for_export, all_data, current_semester
+            # Optionally pass target_major_id=student_major_id or other flags if generator logic depends on it
+        )
+
+        # Sanitize names for filename
+        safe_student_username = re.sub(r'[^\w\u4e00-\u9fff\s\-]', '_', student_username)
+        safe_student_username = safe_student_username.strip(' _').replace(' ', '_')
+        if not safe_student_username: safe_student_username = f"user_{user_id}"
+
+        safe_semester_name = re.sub(r'[^\w\u4e00-\u9fff\s\-]', '_', current_semester.name)
+        safe_semester_name = safe_semester_name.strip(' _').replace(' ', '_')
+        if not safe_semester_name: safe_semester_name = f"semester_{semester_id}"
+
+        filename = f"我的课表_{safe_student_username}_{safe_semester_name}_(全学期).xlsx" # Indicate it's full semester
+
+        send_file_kwargs = {
+            'mimetype': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'as_attachment': True,
+            'download_name': filename
+        }
+
+        return send_file(excel_buffer, **send_file_kwargs)
+
+    except ImportError as ie:
+        app.logger.error(f"API Export: Missing Excel library: {ie}", exc_info=True)
+        return jsonify({"message": "导出功能不可用：缺少 Excel 处理库 (如 openpyxl)。请联系管理员。"}), 501
+    except Exception as e:
+        app.logger.error(f"API Export: Error exporting student timetable for user {user_id}, semester {semester_id}: {e}", exc_info=True)
+        return jsonify({"message": f"导出Excel失败: {str(e)}"}), 500
+    finally:
+        if conn: conn.close() # Ensure connection is closed
 # Add a root route or basic info route if desired
 @app.route('/')
 def index():
