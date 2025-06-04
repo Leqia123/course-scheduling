@@ -4,11 +4,6 @@
       没有课表数据可以显示。
     </div>
     <div v-else>
-      <div class="week-navigation" v-if="totalWeeks > 1">
-        <button @click="prevWeek" :disabled="currentWeek === 1">&lt; 上一周</button>
-        <span>第 {{ currentWeek }} 周 / 共 {{ totalWeeks }} 周</span>
-        <button @click="nextWeek" :disabled="currentWeek === totalWeeks">下一周 &gt;</button>
-      </div>
       <div class="table-responsive">
         <table class="timetable-grid">
           <thead>

@@ -87,7 +87,7 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import axios from 'axios';
-import TimetableGridDisplay from './TimetableGridDisplay.vue'; // 引入课表显示组件
+import TimetableGridDisplay from './TimetableGridDisplay(studentdashboard用).vue'; // 引入课表显示组件
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
