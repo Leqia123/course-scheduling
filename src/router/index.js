@@ -6,7 +6,6 @@ import AdminView from '../views/AdminDashboard.vue'; // 现在是 AdminDashboard
 
 // 导入教师界面的子组件 (保持不变)
 import TeacherTimetable from '../components/TeacherTimetable.vue';
-import TeacherClassMembers from '../components/TeacherClassMembers.vue';
 import TeacherSchedulingRequest from '../components/TeacherSchedulingRequest.vue';
 
 // 导入管理员界面的子组件 (新增)
@@ -44,11 +43,6 @@ const router = createRouter({
           path: 'timetable',
           name: 'teacher-timetable',
           component: TeacherTimetable
-        },
-        {
-          path: 'class-members',
-          name: 'teacher-class-members',
-          component: TeacherClassMembers
         },
         {
           path: 'scheduling-request',

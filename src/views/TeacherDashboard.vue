@@ -5,7 +5,6 @@
       <nav>
         <ul>
           <li><router-link to="/teacher/timetable" active-class="active-link">查询课表</router-link></li>
-          <li><router-link to="/teacher/class-members" active-class="active-link">查询班级人员</router-link></li>
           <li><router-link to="/teacher/scheduling-request" active-class="active-link">提出排课要求</router-link></li>
         </ul>
       </nav>

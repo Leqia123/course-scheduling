@@ -228,11 +228,6 @@ const triggerScheduling = async () => {
 
         // 使用后端实际返回的键名来访问数据
         // 注意：这里的标签文字可以根据实际统计含义调整，比如processed_assignments可能翻译成“已处理的课程计划数”
-        summaryText += `已处理课程计划: ${summary.processed_assignments}, `; // 对应后端的 processed_assignments
-        summaryText += `生成课表条目: ${summary.generated_entries}条, `;      // 对应后端的 generated_entries
-        summaryText += `冲突: ${summary.conflicts}次, `;                   // 对应后端的 conflicts (这个是匹配的)
-        summaryText += `未完成课程计划: ${summary.unfinished_assignments}个.\n`; // 对应后端的 unfinished_assignments
-        summaryText += `数据库记录: 清空 ${summary.cleared_db_entries}条, 保存 ${summary.saved_db_entries}条.\n`; // 对应后端的 cleared_db_entries 和 saved_db_entries
 
         // 检查后端的 errors 列表并显示
         if(summary.errors && summary.errors.length > 0) {

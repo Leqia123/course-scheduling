@@ -1,111 +1,106 @@
 <template>
   <div class="page-content">
-    <h2>提出排课要求</h2>
+    <h2>教师排课要求</h2>
     <!-- 教师提出排课要求/变更申请的区域 -->
     <div class="request-section">
-      <h3>排课要求与申请</h3>
+      <h3>提出新的时间偏好</h3>
+      <p>您可以在这里提出希望<strong>避免</strong>或<strong>优先</strong>安排课程的时间段。请在管理员设置排课计划前提交。</p>
       <!-- 按钮触发模态框 -->
-      <button class="open-modal-button" @click="openRequestModal">提出新的要求/申请</button>
-
-      <!-- 显示已提交的申请列表（可选，如果需要的话） -->
-      <!-- <h4>我的申请记录</h4> -->
-      <!-- TODO: 在这里加载并显示教师已提交的申请列表 -->
-      <!-- <p>(申请记录显示区域)</p> -->
+      <button class="open-modal-button" @click="openRequestModal">提出新的时间偏好</button>
     </div>
+
+    <!-- 显示已提交的偏好列表 -->
+    <div class="preferences-list-section">
+       <h3>我已提交的时间偏好</h3>
+       <p v-if="isPreferencesLoading">加载中...</p>
+       <p v-else-if="preferencesError" class="error-message">{{ preferencesError }}</p>
+       <p v-else-if="teacherPreferences.length === 0">您还没有提交任何时间偏好。</p>
+
+       <ul v-else class="preferences-list">
+          <li v-for="pref in teacherPreferences" :key="pref.id" class="preference-item">
+             <div class="preference-details">
+                <span class="semester-name">{{ pref.semester_name }}</span>
+                <span class="timeslot-info">
+                   {{ pref.day_of_week_display }} 第 {{ pref.period }} 节 ({{ pref.start_time }} - {{ pref.end_time }})
+                </span>
+                <span :class="['preference-type', pref.preference_type]">{{ pref.preference_type_display }}</span>
+             </div>
+             <div class="preference-status">
+                状态: <span :class="['status', pref.status]">{{ pref.status_display }}</span>
+             </div>
+             <div v-if="pref.reason" class="preference-reason">
+                原因: {{ pref.reason }}
+             </div>
+              <div class="preference-timestamps">
+                  提交时间: {{ pref.created_at_formatted }}
+              </div>
+              <!-- --- New Delete Button --- -->
+              <div class="preference-actions">
+                  <button
+                      class="delete-button"
+                      @click="confirmDeletePreference(pref.id)"
+                      :disabled="isDeleting[pref.id]"
+                      :title="isDeleting[pref.id] ? '删除中...' : '删除此偏好'"
+                  >
+                       {{ isDeleting[pref.id] ? '删除中...' : '删除' }}
+                  </button>
+              </div>
+              <!-- --- End Delete Button --- -->
+          </li>
+       </ul>
+       <p v-if="deleteMessage" :class="{'message': true, 'error': isDeleteError}">{{ deleteMessage }}</p>
+    </div>
+
 
     <!-- 排课要求/变更申请模态框 -->
     <div v-if="isModalVisible" class="modal-overlay" @click.self="closeRequestModal">
       <div class="modal-content">
-        <h3>提交排课要求/申请</h3>
-        <form @submit.prevent="handleSubmitRequest">
+        <h3>提交时间偏好</h3>
+        <form @submit.prevent="handleSubmitPreference">
 
           <div class="form-group">
-            <label for="request-type">申请类型:</label>
-            <select id="request-type" v-model="requestType" required>
-              <option value="" disabled>请选择申请类型</option>
-              <option value="modify_existing">修改现有排课</option>
-              <option value="time_constraint">时间/日期偏好或限制</option>
-              <!-- TODO: 可以添加更多类型，例如：申请新增排课 -->
-            </select>
-          </div>
+             <label for="semester-select">选择学期:</label>
+             <select id="semester-select" v-model="selectedSemesterId" required>
+               <option value="" disabled>请选择学期</option>
+               <option v-for="semester in semesters" :key="semester.id" :value="semester.id">
+                 {{ semester.name }}
+               </option>
+             </select>
+           </div>
 
-          <!-- 根据申请类型显示不同的表单字段 -->
-          <div v-if="requestType === 'modify_existing'">
-            <h4>修改现有排课</h4>
-            <div class="form-group">
-              <label for="select-schedule">选择要修改的排课:</label>
-              <select id="select-schedule" v-model="selectedScheduleId" required>
-                <option value="" disabled>请选择一条排课记录</option>
-                <!-- TODO: 这里需要从后端加载当前教师的排课列表 -->
-                <option v-for="schedule in teacherSchedules" :key="schedule.id" :value="schedule.id">
-                  {{ schedule.course_name }} ({{ schedule.day }} {{ schedule.time }} @ {{ schedule.classroom }})
-                </option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label for="change-type">修改内容:</label>
-              <select id="change-type" v-model="changeType" required>
-                 <option value="" disabled>请选择修改内容</option>
-                 <option value="classroom">更换教室</option>
-                 <option value="time">更换时间/节次</option>
-                 <option value="day">更换日期/周</option>
-                 <!-- TODO: 可以添加更多修改内容，例如：更换教师（需要与管理员协商） -->
-              </select>
-            </div>
-
-             <div class="form-group" v-if="changeType">
-                <!-- 根据修改内容，这里的输入框类型可能不同 -->
-                <label for="new-value">新的{{ changeType === 'classroom' ? '教室' : changeType === 'time' ? '时间/节次' : '日期/周' }}:</label>
-                <!-- 简化示例：使用文本输入框。实际应用中应根据 changeType 使用下拉框/日期时间选择器 -->
-                 <input v-if="changeType !== 'classroom'" type="text" id="new-value" v-model="newValue" :placeholder="'请输入新的' + (changeType === 'classroom' ? '教室' : changeType === 'time' ? '时间/节次' : '日期/周')" required>
-
-                 <!-- 教室选择使用下拉框 -->
-                 <select v-if="changeType === 'classroom'" id="new-value-classroom" v-model="newValue" required>
-                     <option value="" disabled>请选择新的教室</option>
-                     <!-- TODO: 这里需要从后端加载可用的教室列表 -->
-                     <option v-for="room in availableClassrooms" :key="room.id" :value="room.id">{{ room.name }}</option>
-                 </select>
-
-            </div>
-          </div>
-
-          <div v-if="requestType === 'time_constraint'">
-             <h4>时间/日期偏好或限制</h4>
+          <!-- 专注于时间/日期偏好 -->
+          <div>
+             <h4>选择时间段</h4>
               <div class="form-group">
-                <label for="constraint-day">日期/周:</label>
-                 <select id="constraint-day" v-model="constraintDay" required>
-                    <option value="" disabled>请选择日期/周</option>
-                    <option v-for="day in availableDays" :key="day" :value="day">{{ day }}</option>
+                 <label for="timeslot-select">日期/节次:</label>
+                 <select id="timeslot-select" v-model="selectedTimeslotId" required>
+                    <option value="" disabled>请选择日期和节次</option>
+                    <option v-for="ts in availableTimeSlots" :key="ts.id" :value="ts.id">
+                       {{ ts.day_of_week }} 第 {{ ts.period }} 节 ({{ ts.start_time }} - {{ ts.end_time }})
+                    </option>
                  </select>
               </div>
-               <div class="form-group">
-                <label for="constraint-time">时间/节次:</label>
-                 <select id="constraint-time" v-model="constraintTime" required>
-                    <option value="" disabled>请选择时间/节次</option>
-                    <option v-for="time in availableTimes" :key="time" :value="time">{{ time }}</option>
-                 </select>
-              </div>
+
               <div class="form-group">
-                <label for="constraint-type">偏好/限制类型:</label>
-                 <select id="constraint-type" v-model="constraintType" required>
+                <label for="preference-type">偏好类型:</label>
+                 <select id="preference-type" v-model="preferenceType" required>
                     <option value="avoid">避免安排</option>
-                    <option value="prefer">优先安排</option>
+                    <!-- <option value="prefer">优先安排</option> -->
                  </select>
               </div>
           </div>
 
           <div class="form-group">
-            <label for="request-reason">原因:</label>
-            <textarea id="request-reason" v-model="requestReason" placeholder="请详细描述您的原因..." rows="4" required></textarea>
+            <label for="request-reason">原因 (可选):</label>
+            <textarea id="request-reason" v-model="requestReason" placeholder="请详细描述您的原因..." rows="4"></textarea>
           </div>
 
           <div class="modal-actions">
-            <button type="submit">提交申请</button>
-            <button type="button" class="cancel-button" @click="closeRequestModal">取消</button>
+            <button type="submit" :disabled="isLoading">提交偏好</button>
+            <button type="button" class="cancel-button" @click="closeRequestModal" :disabled="isLoading">取消</button>
           </div>
         </form>
-        <p v-if="requestMessage" class="message">{{ requestMessage }}</p>
+        <p v-if="requestMessage" :class="{'message': true, 'error': isError}">{{ requestMessage }}</p>
       </div>
     </div>
   </div>
@@ -113,146 +108,290 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-// 此组件不再直接处理路由跳转和用户登录信息，这些由父组件 TeacherDashboard 处理
-// import { useRouter } from 'vue-router'; // 移除
+import axios from 'axios';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 // 模态框状态
 const isModalVisible = ref(false);
+const isLoading = ref(false); // Loading state for submitting new preference
+const isPreferencesLoading = ref(false); // Loading state for fetching preferences list
+const isError = ref(false); // To style message as error for form submission
+const preferencesError = ref(null); // Error message for fetching preferences list
 
-// 申请表单数据
-const requestType = ref(''); // 申请类型
-const selectedScheduleId = ref(null); // 修改现有排课时选中排课的ID
-const changeType = ref(''); // 修改现有排课时修改的内容类型
-const newValue = ref(''); // 修改现有排课时的新值
-const constraintDay = ref(''); // 时间限制：日期
-const constraintTime = ref(''); // 时间限制：时间
-const constraintType = ref('avoid'); // 时间限制：类型 (avoid/prefer)
-const requestReason = ref(''); // 申请原因
+// Data for list and form
+const loggedInUserId = ref(null);
+const semesters = ref([]);
+const availableTimeSlots = ref([]);
+const teacherPreferences = ref([]);
 
-// 模拟数据，实际应从后端获取
-const teacherSchedules = ref([
-    { id: 1, course_name: '高等数学A', day: '周一', time: '第三节', classroom: '教学楼A101' },
-    { id: 2, course_name: '大学物理', day: '周三', time: '第一节', classroom: '教学楼B202' },
-    { id: 3, course_name: '数据结构', day: '周五', time: '第五节', classroom: '实验楼C303' },
-]);
-const availableDays = ref(['周一', '周二', '周三', '周四', '周五']);
-const availableTimes = ref(['第一/二节','第三/四节', '第五/六节','第七/八节']);
-const availableClassrooms = ref([
-    { id: 101, name: '教学楼A101' },
-    { id: 102, name: '教学楼A102' },
-    { id: 201, name: '教学楼B201' },
-    { id: 202, name: '教学楼B202' },
-    { id: 303, name: '实验楼C303' },
-]);
+// Form data
+const selectedSemesterId = ref('');
+const selectedTimeslotId = ref('');
+const preferenceType = ref('avoid');
+const requestReason = ref('');
 
-const requestMessage = ref(''); // 提交申请后的反馈信息
+// Submission feedback
+const requestMessage = ref('');
+const deleteMessage = ref(''); // Message specifically for delete operations
+const isDeleteError = ref(false); // To style delete message as error
 
-// 在组件挂载后执行 (此处不再需要获取用户名，专注于表单相关的数据获取)
-onMounted(() => {
-  // TODO: 在这里调用后端API获取教师课表数据和已提交的申请列表
-  // fetchTeacherTimetable(); // 如果需要在这里显示已提交的申请，可以调用
-  // fetchTeacherRequests();
-  // TODO: 如果是修改现有排课，还需要调用API获取 teacherSchedules 列表
-  // fetchTeacherSchedulesData();
-  // TODO: 如果需要选择新的教室，还需要调用API获取 availableClassrooms 列表
-  // fetchAvailableClassroomsData();
+// State for delete operations - track which item is being deleted
+const isDeleting = ref({}); // Use an object to store loading state per preference ID
+
+
+onMounted(async () => {
+   const storedUserId = localStorage.getItem('user_id');
+   const storedUserRole = localStorage.getItem('userRole');
+
+   if (storedUserId && storedUserRole && storedUserRole.toLowerCase() === 'teacher') {
+       loggedInUserId.value = Number(storedUserId);
+       console.log(`Teacher Scheduling Request: User ID ${loggedInUserId.value} (Role: ${storedUserRole}) logged in.`);
+       await fetchSemesters();
+       await fetchTimeSlots();
+       await fetchTeacherPreferences(loggedInUserId.value);
+   } else {
+       console.error('Teacher Scheduling Request: Invalid or missing user ID/role in localStorage.');
+        preferencesError.value = '未能获取有效的教师登录信息，无法加载偏好列表。';
+        requestMessage.value = '未能获取有效的教师登录信息，请尝试重新登录。';
+        isError.value = true;
+   }
 });
 
+
+const fetchSemesters = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/api/semesters`);
+    semesters.value = response.data;
+  } catch (error) {
+    console.error('Error fetching semesters:', error);
+     requestMessage.value = '无法加载学期信息。';
+     isError.value = true;
+  }
+};
+
+const fetchTimeSlots = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/api/time-slots`);
+    availableTimeSlots.value = response.data;
+    console.log('Fetched Time Slots:', availableTimeSlots.value);
+  } catch (error) {
+    console.error('Error fetching time slots:', error);
+     requestMessage.value = '无法加载时间段信息。';
+     isError.value = true;
+  }
+};
+
+const fetchTeacherPreferences = async (userId) => {
+    if (!userId) {
+        preferencesError.value = '无法获取用户ID，无法加载偏好列表。';
+        return;
+    }
+    isPreferencesLoading.value = true;
+    preferencesError.value = null;
+
+    try {
+        // Pass user_id as a query parameter for verification in DELETE API (Temporary)
+        // Replace with your secure method of obtaining user_id in backend DELETE API
+        const response = await axios.get(`${API_BASE_URL}/api/teacher/${userId}/scheduling-preferences`);
+        teacherPreferences.value = response.data;
+        console.log('Fetched Teacher Preferences:', teacherPreferences.value);
+        // Initialize isDeleting state for all preferences
+        teacherPreferences.value.forEach(pref => {
+            isDeleting.value[pref.id] = false;
+        });
+
+    } catch (error) {
+        console.error('Error fetching teacher preferences:', error);
+        if (error.response) {
+            preferencesError.value = error.response.data.message || `加载偏好列表失败: ${error.response.statusText}`;
+        } else {
+            preferencesError.value = '加载偏好列表时发生网络错误或服务器无响应。';
+        }
+    } finally {
+        isPreferencesLoading.value = false;
+    }
+};
+
 const openRequestModal = () => {
+  if (loggedInUserId.value === null) {
+      requestMessage.value = '请先登录教师账号再提出要求。';
+      isError.value = true;
+      return;
+  }
+   if (semesters.value.length === 0 || availableTimeSlots.value.length === 0) {
+        requestMessage.value = '学期或时间段信息正在加载中，请稍候再试。';
+        isError.value = true;
+       return;
+   }
+
   isModalVisible.value = true;
-  resetRequestForm(); // 打开时重置表单
+  resetPreferenceForm();
+  requestMessage.value = ''; // Clear form submission message
+  isError.value = false;
 };
 
 const closeRequestModal = () => {
   isModalVisible.value = false;
-  resetRequestForm(); // 关闭时重置表单
-  requestMessage.value = ''; // 清空反馈信息
+  resetPreferenceForm();
+  requestMessage.value = '';
+  isError.value = false;
 };
 
-const resetRequestForm = () => {
-    requestType.value = '';
-    selectedScheduleId.value = null;
-    changeType.value = '';
-    newValue.value = '';
-    constraintDay.value = '';
-    constraintTime.value = '';
-    constraintType.value = 'avoid';
+const resetPreferenceForm = () => {
+    selectedSemesterId.value = '';
+    selectedTimeslotId.value = '';
+    preferenceType.value = 'avoid';
     requestReason.value = '';
 }
 
-const handleSubmitRequest = () => {
-  requestMessage.value = ''; // 清空之前的反馈信息
+const handleSubmitPreference = async () => {
+  if (loggedInUserId.value === null) {
+       requestMessage.value = '无法获取您的用户ID，请重新登录。';
+       isError.value = true;
+       return;
+  }
 
-  // TODO: 在这里调用后端API提交申请
-  // 收集表单数据
-  const requestData = {
-      type: requestType.value,
+  isLoading.value = true;
+  requestMessage.value = '';
+  isError.value = false;
+  deleteMessage.value = ''; // Clear delete messages
+
+  const preferenceData = {
+      user_id: loggedInUserId.value, // Send user ID (needed for some backend auth/logic)
+      semester_id: selectedSemesterId.value,
+      timeslot_id: selectedTimeslotId.value,
+      preference_type: preferenceType.value.toLowerCase(),
       reason: requestReason.value,
-      // 根据申请类型添加其他字段
-      ...(requestType.value === 'modify_existing' && {
-          schedule_id: selectedScheduleId.value,
-          change_type: changeType.value,
-          new_value: newValue.value, // 注意这里，实际应根据 changeType 发送不同格式的数据
-      }),
-      ...(requestType.value === 'time_constraint' && {
-          day_of_week: constraintDay.value,
-          time_slot: constraintTime.value,
-          constraint_type: constraintType.value,
-      }),
-      // TODO: 可能还需要提交当前教师的用户ID
-      // teacher_id: /* 获取当前教师ID */
   };
 
-  console.log('提交教师申请:', requestData);
+  console.log('提交教师时间偏好:', preferenceData);
 
-  // 模拟提交成功或失败
-  // axios.post('/api/teacher_requests', requestData)
-  //   .then(response => {
-        requestMessage.value = '申请已提交成功！等待管理员审核。';
-        // closeRequestModal(); // 提交成功后关闭模态框
-        // TODO: 刷新教师的申请记录列表
-  //   })
-  //   .catch(error => {
-  //      requestMessage.value = error.response?.data?.message || '提交申请失败，请稍后重试。';
-  //      console.error('Submit request error:', error);
-  //   });
+  try {
+    const response = await axios.post(`${API_BASE_URL}/api/teacher/scheduling-preferences`, preferenceData);
 
-  // 模拟成功
-  setTimeout(() => { // 模拟网络延迟
-      requestMessage.value = '模拟申请已提交成功！';
-      // closeRequestModal(); // 模拟提交成功后关闭模态框 (可选)
-  }, 1000);
+    requestMessage.value = response.data.message || '时间偏好已提交成功！';
+    isError.value = false;
+
+    await fetchTeacherPreferences(loggedInUserId.value); // Refresh list
+
+  } catch (error) {
+     console.error('Submit preference error:', error);
+     isError.value = true;
+
+     if (error.response) {
+         requestMessage.value = error.response.data.error || error.response.data.message || `提交偏好失败: ${error.response.statusText}`;
+         if (error.response.status === 400 && error.response.data.message && error.response.data.message.includes("数据完整性错误")) {
+             requestMessage.value += " (您可能已为该学期该时段提交过同类偏好)";
+         }
+
+     } else {
+         requestMessage.value = '提交偏好时发生网络错误或服务器无响应。';
+     }
+  } finally {
+     isLoading.value = false;
+  }
 };
 
-// TODO: 函数用于从后端获取数据 (teacherSchedules, availableClassrooms 等)
-// async function fetchTeacherSchedulesData() {
-//    try {
-//       const response = await axios.get('/api/teacher/schedules', { /* auth header */ });
-//       teacherSchedules.value = response.data;
-//    } catch (error) {
-//       console.error('Failed to fetch teacher schedules:', error);
-//    }
-// }
-// async function fetchAvailableClassroomsData() { /* ... */ }
+// --- New Delete Functions ---
+
+// Confirmation dialog before deleting
+const confirmDeletePreference = (preferenceId) => {
+    if (confirm('确定要删除此排课时间偏好吗？')) {
+        deletePreference(preferenceId);
+    }
+}
+
+// Send DELETE request to backend
+const deletePreference = async (preferenceId) => {
+    if (loggedInUserId.value === null) {
+       deleteMessage.value = '无法获取您的用户ID，请重新登录。';
+       isDeleteError.value = true;
+       return;
+    }
+
+    isDeleting.value[preferenceId] = true; // Set loading state for this specific item
+    deleteMessage.value = ''; // Clear previous delete message
+    isDeleteError.value = false;
+
+    console.log('尝试删除偏好:', preferenceId);
+
+    try {
+        // Call the backend DELETE API.
+        // IMPORTANT: Pass user_id securely for backend verification.
+        // For this example, adding user_id as a query param (LESS SECURE).
+        // Replace with passing user_id via token/session or header if using auth middleware.
+        const response = await axios.delete(`${API_BASE_URL}/api/teacher/scheduling-preferences/${preferenceId}`, {
+            params: { user_id: loggedInUserId.value } // UNSAFE: Use secure method in production
+            // Or if using headers with middleware: { headers: { 'X-User-ID': loggedInUserId.value } }
+        });
+
+        deleteMessage.value = response.data.message || '偏好删除成功！';
+        isDeleteError.value = false;
+
+        // --- Remove the deleted item from the list directly or refetch ---
+        // Option 1: Remove from list (faster UI update)
+        teacherPreferences.value = teacherPreferences.value.filter(pref => pref.id !== preferenceId);
+
+        // Option 2: Refetch the entire list (more robust for complex scenarios)
+        // await fetchTeacherPreferences(loggedInUserId.value);
+        // --- End Remove ---
+
+    } catch (error) {
+        console.error('Delete preference error:', error);
+        isDeleteError.value = true;
+
+        if (error.response) {
+            deleteMessage.value = error.response.data.error || error.response.data.message || `删除偏好失败: ${error.response.statusText}`;
+        } else {
+            deleteMessage.value = '删除偏好时发生网络错误或服务器无响应。';
+        }
+    } finally {
+        isDeleting.value = { ...isDeleting.value, [preferenceId]: false }; // Reset loading state for this item
+        // Or clear all if refetching: isDeleting.value = {};
+    }
+};
+// --- End Delete Functions ---
+
 </script>
 
 <style scoped>
-/* 确保这里的样式与您原代码中的完全一致，仅移除原 .teacher-container 和 logout 按钮相关的样式 */
+/* Keep previous styles, add styles for delete button */
 .page-content {
-  padding: 20px; /* 为子页面内容提供一些内边距 */
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
 }
-.request-section {
-  margin-top: 30px;
-  border-top: 1px solid #eee;
-  padding-top: 20px;
+
+h2 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 20px;
 }
-.request-section h3 {
+
+.request-section, .preferences-list-section {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  background-color: #fff;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.request-section h3, .preferences-list-section h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #007bff;
+}
+
+.request-section p {
     margin-bottom: 15px;
+    color: #555;
 }
+
 .open-modal-button {
-  display: inline-block; /* 确保按钮在行内 */
-  padding: 10px 15px;
-  background-color: #007bff; /* 使用主题色 */
+  display: inline-block;
+  padding: 10px 18px;
+  background-color: #28a745; /* Green button */
   color: white;
   border: none;
   border-radius: 4px;
@@ -261,33 +400,162 @@ const handleSubmitRequest = () => {
   transition: background-color 0.3s ease;
 }
 .open-modal-button:hover {
-  background-color: #0056b3;
+  background-color: #218838;
 }
 
-/* 模态框样式 */
+/* Preferences List Styles */
+.preferences-list-section {
+    margin-top: 30px;
+}
+
+.preferences-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.preference-item {
+    background-color: #f9f9f9;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    display: flex; /* Use flexbox for layout */
+    flex-wrap: wrap; /* Allow items to wrap */
+    justify-content: space-between; /* Distribute space */
+    align-items: center; /* Vertically center items */
+}
+
+.preference-details {
+    font-size: 1.1em;
+    /* margin-bottom: 8px; Removed margin-bottom for flex layout */
+    color: #333;
+    flex-grow: 1; /* Allow details to take available space */
+    margin-right: 10px; /* Space between details and actions */
+}
+
+.semester-name {
+    font-weight: bold;
+    margin-right: 10px;
+    color: #0056b3;
+}
+
+.timeslot-info {
+    margin-right: 10px;
+    color: #555;
+}
+
+.preference-type {
+    font-weight: bold;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 0.9em;
+    white-space: nowrap; /* Prevent text wrapping */
+}
+
+.preference-type.avoid {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.preference-type.prefer {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.preference-status {
+    font-size: 0.9em;
+    color: #666;
+    /* margin-bottom: 5px; Removed margin-bottom */
+    flex-basis: 100%; /* Make status take full width on next line */
+    margin-top: 8px; /* Add space above status if it wraps */
+}
+
+.status {
+    font-weight: bold;
+}
+
+.status.pending { color: #ffc107; }
+.status.approved { color: #28a745; }
+.status.rejected { color: #dc3545; }
+.status.applied { color: #17a2b8; }
+
+
+.preference-reason {
+    font-size: 0.9em;
+    color: #777;
+    font-style: italic;
+    margin-top: 5px;
+    padding-top: 5px;
+    border-top: 1px dashed #eee;
+    flex-basis: 100%; /* Make reason take full width */
+}
+
+.preference-timestamps {
+     font-size: 0.8em;
+     color: #999;
+     margin-top: 8px;
+     flex-basis: 100%; /* Make timestamps take full width */
+}
+
+/* --- New Actions Section Style --- */
+.preference-actions {
+    flex-shrink: 0; /* Prevent shrinking */
+    margin-left: auto; /* Space from details */
+    display: flex; /* Use flex to align buttons if multiple */
+    align-items: flex-start;
+}
+
+.delete-button {
+    padding: 5px 10px;
+    background-color: #dc3545; /* Red */
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.3s ease, opacity 0.3s ease;
+
+}
+
+.delete-button:hover:not(:disabled) {
+    background-color: #c82333;
+}
+
+.delete-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+/* --- End New Actions Section Style --- */
+
+
+/* Modal styles */
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.6); /* 半透明黑色背景 */
+  background-color: rgba(0, 0, 0, 0.6);
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000; /* 确保在最上层 */
+  z-index: 1000;
 }
 
 .modal-content {
   background-color: #fff;
-  padding: 30px; /* 增加内边距 */
+  padding: 30px;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  max-width: 500px; /* 最大宽度 */
-  width: 90%; /* 响应式宽度 */
-  max-height: 80vh; /* 最大高度，防止内容过多溢出 */
-  overflow-y: auto; /* 内容过多时允许垂直滚动 */
-  position: relative; /* 为了方便定位关闭按钮（如果需要） */
+  max-width: 450px;
+  width: 90%;
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
 }
 
 .modal-content h3 {
@@ -295,39 +563,39 @@ const handleSubmitRequest = () => {
   margin-bottom: 20px;
   text-align: center;
   color: #333;
+  font-size: 1.5em;
 }
 
 .form-group {
-  margin-bottom: 15px; /* 减小一些间距，让表单更紧凑 */
+  margin-bottom: 18px;
 }
 
 label {
   display: block;
-  margin-bottom: 6px; /* 减小一些间距 */
+  margin-bottom: 8px;
   font-weight: bold;
   color: #555;
-  font-size: 14px; /* 字体稍小 */
+  font-size: 1em;
 }
 
 input[type="text"],
 select,
 textarea {
   width: 100%;
-  padding: 8px; /* 减小内边距 */
+  padding: 10px;
   border: 1px solid #ccc;
   border-radius: 4px;
   box-sizing: border-box;
-  font-size: 14px; /* 字体稍小 */
+  font-size: 1em;
 }
 
 textarea {
-    resize: vertical; /* 允许垂直调整大小 */
+    resize: vertical;
 }
 
-
 .modal-actions {
-  margin-top: 25px; /* 增加顶部间距 */
-  text-align: right; /* 按钮靠右对齐 */
+  margin-top: 30px;
+  text-align: right;
 }
 
 .modal-actions button {
@@ -335,35 +603,56 @@ textarea {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 15px;
-  margin-left: 10px; /* 按钮之间留白 */
-  transition: background-color 0.3s ease;
+  font-size: 1em;
+  margin-left: 10px;
+  transition: background-color 0.3s ease, opacity 0.3s ease;
+}
+
+.modal-actions button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .modal-actions button[type="submit"] {
-  background-color: #28a745; /* 绿色表示提交 */
+  background-color: #007bff;
   color: white;
 }
 
-.modal-actions button[type="submit"]:hover {
-  background-color: #218838;
+.modal-actions button[type="submit"]:hover:not(:disabled) {
+  background-color: #0056b3;
 }
 
 .modal-actions .cancel-button {
-  background-color: #6c757d; /* 灰色表示取消 */
+  background-color: #6c757d;
   color: white;
 }
 
-.modal-actions .cancel-button:hover {
+.modal-actions .cancel-button:hover:not(:disabled) {
   background-color: #5a6268;
 }
 
+/* Messages */
 .message {
-    margin-top: 15px;
+    margin-top: 20px;
+    padding: 10px;
     text-align: center;
-    font-size: 14px;
-    color: green; /* 成功消息 */
+    font-size: 1em;
+    border-radius: 4px;
+    color: #155724;
+    background-color: #d4edda;
+    border: 1px solid #c3e6cb;
 }
-/* 如果有错误消息，可以单独设置颜色 */
-/* .message.error { color: red; } */
+
+.message.error, .error-message {
+    color: #721c24;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+}
+.error-message {
+    margin-top: 15px;
+    padding: 10px;
+    text-align: center;
+    font-size: 1em;
+    border-radius: 4px;
+}
 </style>
