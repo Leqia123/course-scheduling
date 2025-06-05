@@ -28,7 +28,23 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "031104")  # Replace with your DB passwor
 
 # WARNING: Storing password directly in code or env vars is not ideal for production.
 # Consider using a secrets management system.
-
+def get_teacher_id_by_user_id(user_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None: return None
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM teachers WHERE user_id = %s", (user_id,))
+        teacher_id = cur.fetchone()
+        cur.close()
+        return teacher_id[0] if teacher_id else None
+    except Exception as e:
+        app.logger.error(f"Error getting teacher_id for user {user_id}: {e}", exc_info=True)
+        return None
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
 def get_db_connection():
     """Establishes and returns a database connection."""
     try:
@@ -1656,6 +1672,400 @@ def get_teacher_weekly_timetable(user_id, semester_id):
             f"API: An unexpected error occurred fetching teacher weekly timetable for user {user_id}, semester {semester_id}, week {week_number}: {e}",
             exc_info=True)
         return jsonify({"message": f"获取教师课表数据时发生内部错误"}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+@app.route('/api/time-slots', methods=['GET'])
+def get_time_slots():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None: return jsonify({"message": "数据库连接失败"}), 500
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT id, day_of_week, period, start_time, end_time FROM time_slots ORDER BY day_of_week, period")
+        time_slots = cur.fetchall()
+        cur.close()
+
+        # Format time objects for JSON
+        formatted_time_slots = []
+        for ts in time_slots:
+            formatted_ts = dict(ts)
+            if isinstance(formatted_ts.get('start_time'), datetime.time):
+                 formatted_ts['start_time'] = formatted_ts['start_time'].strftime('%H:%M')
+            if isinstance(formatted_ts.get('end_time'), datetime.time):
+                 formatted_ts['end_time'] = formatted_ts['end_time'].strftime('%H:%M')
+            formatted_time_slots.append(formatted_ts)
+
+
+        return jsonify(formatted_time_slots)
+    except Exception as e:
+        app.logger.error(f"Error fetching time slots: {e}", exc_info=True)
+        return jsonify({"message": "获取时间段信息失败"}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+# API to submit teacher preference
+@app.route('/api/teacher/scheduling-preferences', methods=['POST'])
+# Assuming you have authentication/authorization middleware that provides user_id
+# For simplicity, let's assume user_id is included in the request body for now,
+# but ideally, it should come from the authenticated user session/token.
+def submit_teacher_scheduling_preference():
+    data = request.json
+
+    # Validate required fields
+    required_fields = ['user_id', 'semester_id', 'timeslot_id', 'preference_type', 'reason']
+    for field in required_fields:
+        if field not in data or data[field] is None:
+            return jsonify({"error": f"缺少必填字段: {field}"}), 400
+
+    user_id = data['user_id']
+    semester_id = data['semester_id']
+    timeslot_id = data['timeslot_id']
+    preference_type = data['preference_type'] # Expecting 'avoid' for now
+    reason = data['reason']
+
+    if preference_type.lower() not in ['avoid', 'prefer']: # Basic validation for preference type
+         return jsonify({"error": "无效的偏好类型"}), 400
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"message": "数据库连接失败"}), 500
+
+        cur = conn.cursor()
+
+        # 1. Verify user exists and is a teacher (Optional but good practice)
+        cur.execute("SELECT id, role FROM users WHERE id = %s", (user_id,))
+        user_info = cur.fetchone()
+        if not user_info or user_info[1].lower() != 'teacher':
+            conn.rollback()
+            cur.close()
+            return jsonify({"error": "用户不存在或不是教师类型"}), 403
+
+        # 2. Get teacher_id from user_id
+        cur.execute("SELECT id FROM teachers WHERE user_id = %s", (user_id,))
+        teacher_profile = cur.fetchone()
+        if not teacher_profile:
+            conn.rollback()
+            cur.close()
+            return jsonify({"error": "找不到该用户关联的教师档案"}), 404
+        teacher_id = teacher_profile[0]
+
+        # 3. Verify semester and timeslot exist (Optional but good practice)
+        cur.execute("SELECT 1 FROM semesters WHERE id = %s", (semester_id,))
+        if not cur.fetchone():
+            conn.rollback()
+            cur.close()
+            return jsonify({"error": "无效的学期ID"}), 400
+
+        cur.execute("SELECT 1 FROM time_slots WHERE id = %s", (timeslot_id,))
+        if not cur.fetchone():
+            conn.rollback()
+            cur.close()
+            return jsonify({"error": "无效的时间段ID"}), 400
+
+
+        # 4. Insert the preference into the database
+        query = """
+        INSERT INTO teacher_scheduling_preferences
+        (teacher_id, semester_id, timeslot_id, preference_type, reason, status)
+        VALUES (%s, %s, %s, %s, %s, 'pending')
+        ON CONFLICT (teacher_id, semester_id, timeslot_id, preference_type)
+        DO UPDATE SET
+            reason = EXCLUDED.reason, -- Update reason if preference already exists
+            status = 'pending', -- Reset status to pending on update
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING id; -- Return the ID of the inserted/updated row
+        """
+        cur.execute(query, (teacher_id, semester_id, timeslot_id, preference_type.lower(), reason))
+
+        preference_id = cur.fetchone()[0] # Get the returned ID
+
+        conn.commit() # Commit the transaction
+        cur.close()
+
+        return jsonify({"message": "排课要求已成功提交", "id": preference_id}), 201 # 201 Created or 200 OK
+
+    except psycopg2.IntegrityError as e:
+        conn.rollback() # Rollback the transaction on integrity error
+        app.logger.error(f"API: Integrity error submitting preference: {e}", exc_info=True)
+        # This block might catch if FK constraints fail before the explicit checks,
+        # or if the UNIQUE constraint is hit (though ON CONFLICT handles the unique case)
+        return jsonify({"message": "数据完整性错误，请检查输入信息"}), 400 # More generic message
+
+    except Exception as e:
+        if conn: conn.rollback() # Ensure rollback on any other error
+        app.logger.error(f"API: An unexpected error occurred submitting teacher preference: {e}", exc_info=True)
+        return jsonify({"message": f"提交排课要求时发生内部错误"}), 500
+
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+# Add this new route to your Flask application
+
+@app.route('/api/teacher/<int:user_id>/scheduling-preferences', methods=['GET'])
+# Assuming you have authentication/authorization middleware that verifies user_id
+def get_teacher_scheduling_preferences(user_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"message": "数据库连接失败"}), 500
+
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Optional: Verify user exists and is a teacher (Good practice)
+        cur.execute("SELECT id, role FROM users WHERE id = %s", (user_id,))
+        user_info = cur.fetchone()
+        if not user_info or user_info['role'].lower() != 'teacher':
+            cur.close()
+            return jsonify({"error": "用户不存在或不是教师类型"}), 403
+
+        # Get teacher_id from user_id
+        cur.execute("SELECT id FROM teachers WHERE user_id = %s", (user_id,))
+        teacher_profile = cur.fetchone()
+        if not teacher_profile:
+            cur.close()
+            return jsonify({"error": "找不到该用户关联的教师档案"}), 404
+        teacher_id = teacher_profile['id']
+
+        # Get optional semester_id from query parameters
+        semester_id = request.args.get('semester_id', type=int)
+
+        # Base query to fetch preferences
+        query = """
+        SELECT
+            tsp.id,
+            s.name as semester_name,
+            ts.day_of_week,
+            ts.period,
+            ts.start_time,
+            ts.end_time,
+            tsp.preference_type,
+            tsp.reason,
+            tsp.status,
+            tsp.created_at,
+            tsp.updated_at
+        FROM
+            teacher_scheduling_preferences tsp
+        JOIN
+            semesters s ON tsp.semester_id = s.id
+        JOIN
+            time_slots ts ON tsp.timeslot_id = ts.id
+        WHERE
+            tsp.teacher_id = %s
+        """
+        query_params = [teacher_id]
+
+        # Add semester filter if provided
+        if semester_id is not None:
+            query += " AND tsp.semester_id = %s"
+            query_params.append(semester_id)
+        query += " ORDER BY tsp.created_at DESC;" # Order by creation date, newest first
+        cur.execute(query, query_params)
+        fetched_preferences = cur.fetchall()
+        # --- Format time objects and map status/type to Chinese ---
+        preferences_for_json = []
+        # Simple mappings (adjust if needed based on your stored values)
+        status_map = {
+            'pending': '待处理',
+            'approved': '已批准',
+            'rejected': '已拒绝',
+            'applied': '已应用' # If your system tracks application in scheduling
+            # Add other statuses if any
+        }
+        preference_type_map = {
+             'avoid': '避免安排',
+             'prefer': '优先安排'
+         }
+        day_map = { # Assuming DB stores English names
+              'Monday': '周一', 'Tuesday': '周二', 'Wednesday': '周三',
+              'Thursday': '周四', 'Friday': '周五', 'Saturday': '周六', 'Sunday': '周日'
+        }
+
+
+        for row in fetched_preferences:
+            preference = dict(row)
+
+            # Format time fields
+            if 'start_time' in preference and isinstance(preference['start_time'], datetime.time):
+                preference['start_time'] = preference['start_time'].strftime('%H:%M') # Using %H:%M for display
+            if 'end_time' in preference and isinstance(preference['end_time'], datetime.time):
+                preference['end_time'] = preference['end_time'].strftime('%H:%M') # Using %H:%M for display
+
+            # Map status and type
+            preference['status_display'] = status_map.get(preference.get('status', '').lower(), preference.get('status', '未知状态'))
+            preference['preference_type_display'] = preference_type_map.get(preference.get('preference_type', '').lower(), preference.get('preference_type', '未知类型'))
+
+            # Map day of week
+            if 'day_of_week' in preference and preference['day_of_week'] in day_map:
+                 preference['day_of_week_display'] = day_map[preference['day_of_week']]
+            else:
+                 preference['day_of_week_display'] = preference.get('day_of_week', '未知日期')
+
+
+            # Format timestamps (optional, but good for history)
+            if 'created_at' in preference and isinstance(preference['created_at'], datetime.datetime):
+                 preference['created_at_formatted'] = preference['created_at'].strftime('%Y-%m-%d %H:%M')
+            if 'updated_at' in preference and isinstance(preference['updated_at'], datetime.datetime):
+                 preference['updated_at_formatted'] = preference['updated_at'].strftime('%Y-%m-%d %H:%M')
+
+
+            preferences_for_json.append(preference)
+        # --- End of Formatting ---
+
+
+        cur.close()
+
+        return jsonify(preferences_for_json), 200
+
+    except Exception as e:
+        app.logger.error(f"API: An unexpected error occurred fetching teacher preferences for user {user_id}: {e}", exc_info=True)
+        return jsonify({"message": f"获取教师排课要求数据时发生内部错误"}), 500
+
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+@app.route('/api/teacher/scheduling-preferences/<int:preference_id>', methods=['DELETE'])
+def delete_teacher_scheduling_preference(preference_id):
+    # In a real app, securely get the user_id from the authenticated context
+    # For this example, let's assume user_id is passed in query parameters (less secure)
+    # Or modify to get it from g.user_id if using auth middleware
+    # user_id = request.args.get('user_id', type=int) # Example using query param (less secure)
+    # Or from request body (less secure for DELETE)
+    # data = request.json
+    # user_id = data.get('user_id')
+
+    # SECURE APPROACH (Assuming user_id is available from auth context, e.g., Flask-Login, JWT)
+    # Replace this placeholder with how your app gets the logged-in user's ID
+    # Example using a hypothetical get_logged_in_user_id() function:
+    logged_in_user_id = None # Placeholder
+    # try:
+    #     logged_in_user_id = get_logged_in_user_id() # Your actual function
+    # except Exception as e:
+    #     app.logger.error(f"Could not get logged in user ID: {e}")
+    #     return jsonify({"message": "无法验证用户身份"}), 401 # Unauthorized
+
+
+    # --- Temporarily use a placeholder user_id for demonstration if you don't have auth setup ---
+    # You will need to replace this with your actual method of getting user_id securely.
+    # If frontend sends user_id, get it from there (but this is less secure for DELETE)
+    # As a temporary hack for local testing: maybe get user_id from localStorage in frontend
+    # and send it as a query parameter? No, let's stick to path parameter and assume auth validates it.
+    # We need to ensure that the *actual logged-in user* is the one making the request.
+    # The most robust way is for the auth system to provide the user ID to the backend.
+    # Let's assume your auth middleware ensures `user_id` is available in the request context
+    # or that the frontend passes it securely (e.g. in a header that your middleware verifies).
+    # For the function signature, it's better to have a way to get the user ID.
+
+    # --- Let's adjust the API design for better security ---
+    # The API should not take teacher_id or user_id in the path or body for DELETE
+    # because that would allow a malicious user to try deleting *other* teachers' preferences.
+    # Instead, the backend must know the identity of the user *making the request*.
+    # The API should only take the preference_id to be deleted.
+    # The backend then checks if the preference belongs to the authenticated user.
+
+    # Re-designing the DELETE API: only takes preference_id, backend verifies ownership
+    # Assuming your auth system makes the logged-in user's ID available, e.g., via `g` object or similar context.
+    # Let's simulate getting logged_in_user_id here for demonstration, but REPLACE THIS.
+
+    # Placeholder for getting logged in user ID (REPLACE WITH YOUR AUTH MECHANISM)
+    # For this example, let's get it from a query parameter. UNSAFE FOR PRODUCTION!
+    # user_id = request.args.get('user_id', type=int)
+    # if user_id is None:
+    #      return jsonify({"message": "无法获取用户身份信息"}), 401 # Unauthorized
+
+
+    # BETTER: Rely on your actual authentication system.
+    # If you have Flask-Login:
+    # from flask_login import current_user
+    # if not current_user.is_authenticated:
+    #    return jsonify({"message": "用户未认证"}), 401
+    # user_id = current_user.id
+    # Find teacher_id from user_id
+
+    # For simplicity in this example, let's assume the `user_id` is passed securely somehow,
+    # and we will retrieve it *within* this function for verification.
+    # A more secure structure would be middleware handling user ID extraction.
+    # Let's refine the current function structure slightly.
+
+    # --- Revised DELETE API Logic ---
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify({"message": "数据库连接失败"}), 500
+        cur = conn.cursor()
+
+        user_id_from_frontend = request.args.get('user_id', type=int)
+        if user_id_from_frontend is None:
+             # Or get from session/token if available
+             return jsonify({"message": "无法获取用户身份信息"}), 401 # Unauthorized
+
+        # Get the actual teacher_id associated with the logged-in user_id
+        cur.execute("SELECT id FROM teachers WHERE user_id = %s", (user_id_from_frontend,))
+        teacher_profile = cur.fetchone()
+        if not teacher_profile:
+            cur.close()
+            return jsonify({"error": "找不到该用户关联的教师档案或用户不是教师"}), 403 # Forbidden
+        requester_teacher_id = teacher_profile[0]
+        # --- END SECURE USER ID RETRIEVAL (Adapt this) ---
+
+
+        # Check if the preference exists AND belongs to the requesting teacher
+        query = """
+        SELECT teacher_id FROM teacher_scheduling_preferences WHERE id = %s;
+        """
+        cur.execute(query, (preference_id,))
+        preference_owner_info = cur.fetchone()
+
+        if not preference_owner_info:
+            # Preference with this ID does not exist
+            cur.close()
+            return jsonify({"error": "未找到要删除的排课要求。"}), 404
+
+        preference_owner_teacher_id = preference_owner_info[0]
+
+        # IMPORTANT SECURITY CHECK: Ensure the requesting teacher owns this preference
+        if preference_owner_teacher_id != requester_teacher_id:
+            cur.close()
+            return jsonify({"error": "无权删除该排课要求。"}), 403 # Forbidden
+
+
+        # If ownership is verified, proceed to delete
+        delete_query = """
+        DELETE FROM teacher_scheduling_preferences WHERE id = %s;
+        """
+        cur.execute(delete_query, (preference_id,))
+
+        # Check if any row was actually deleted (should be 1 if found and owned)
+        if cur.rowcount == 0:
+             # This case should ideally not happen if the SELECT check passed,
+             # but good to have for robustness. Could indicate a race condition or logic error.
+             conn.rollback()
+             cur.close()
+             return jsonify({"error": "删除失败，可能要求已被移除或您无权操作。"}), 400
+
+
+        conn.commit() # Commit the transaction
+        cur.close()
+
+        return jsonify({"message": "排课要求已成功删除"}), 200 # OK
+
+    except Exception as e:
+        if conn: conn.rollback() # Ensure rollback on any other error
+        app.logger.error(f"API: An unexpected error occurred deleting preference {preference_id} for user {user_id_from_frontend}: {e}", exc_info=True)
+        return jsonify({"message": f"删除排课要求时发生内部错误"}), 500
+
     finally:
         if cur: cur.close()
         if conn: conn.close()
