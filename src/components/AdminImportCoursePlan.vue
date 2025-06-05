@@ -1,306 +1,335 @@
 <template>
   <div class="course-plan-management">
-    <h2>课程计划管理</h2>
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-header">
+          <span>课程计划管理</span>
+        </div>
+      </template>
 
-    <div class="header-controls">
-      <div class="semester-selector">
-        <label for="semester-select">选择学期:</label>
-        <select id="semester-select" v-model="selectedSemesterId" @change="fetchCoursePlans">
-          <option value="" disabled>请选择学期</option>
-          <option v-for="semester in semesters" :key="semester.id" :value="semester.id">
-            {{ semester.name }}
-          </option>
-        </select>
+      <!-- Header Controls -->
+      <div class="header-controls">
+        <el-form :inline="true" class="control-form">
+          <el-form-item label="选择学期:" class="semester-selector-item">
+            <el-select
+              v-model="selectedSemesterId"
+              placeholder="请选择学期"
+              @change="handleSemesterChange"
+              clearable
+              filterable
+              style="width: 250px;"
+            >
+              <el-option
+                v-for="semester in semesters"
+                :key="semester.id"
+                :label="semester.name"
+                :value="semester.id"
+              />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item>
+             <el-button
+               type="primary"
+               @click="handleManualAdd"
+               :disabled="!selectedSemesterId"
+               :icon="Plus"
+               style="margin-left: 200px;"
+             >
+               手动添加
+             </el-button>
+             <el-button @click="handleDownloadTemplate" :icon="Download" style="margin-left: 20px;">
+               下载模板
+             </el-button>
+             <input type="file" ref="fileInputRef" style="display: none;" @change="handleFileSelected" accept=".xls,.xlsx" />
+             <el-button
+               type="success"
+               @click="triggerFileInput"
+               :disabled="!selectedSemesterId || uploadStatus === 'uploading'"
+               :loading="uploadStatus === 'uploading'"
+               :icon="Upload"
+                 style="margin-left: 20px;"
+             >
+               {{ uploadStatus === 'uploading' ? '上传中...' : '从Excel导入' }}
+             </el-button>
+             <el-button
+               type="warning"
+               @click="triggerScheduling"
+               :disabled="!selectedSemesterId || schedulingStatus === 'running'"
+               :loading="schedulingStatus === 'running'"
+               :icon="Clock"
+               style="margin-left: 20px;"
+             >
+               {{ schedulingStatus === 'running' ? '排课中...' : '开始排课' }}
+             </el-button>
+          </el-form-item>
+        </el-form>
       </div>
-      <div class="action-buttons">
-        <button class="action-button primary-button" @click="handleManualAdd" :disabled="!selectedSemesterId">
-          <i class="icon-add"></i> 手动添加
-        </button>
-        <button class="action-button" @click="handleDownloadTemplate">
-          <i class="icon-download"></i> 下载模板
-        </button>
-        <input type="file" ref="fileInputRef" style="display: none;" @change="handleFileSelected" accept=".xls,.xlsx" />
-        <button class="action-button success-button" @click="triggerFileInput" :disabled="!selectedSemesterId || uploadStatus === 'uploading'">
-            <i class="icon-upload"></i> {{ uploadStatus === 'uploading' ? '上传中...' : '从Excel导入' }}
-        </button>
-        <button
-    class="action-button warning-button"
-    @click="triggerScheduling"
-    :disabled="!selectedSemesterId || schedulingStatus === 'running'"
->
-    <i class="icon-schedule"></i> {{ schedulingStatus === 'running' ? '排课中...' : '开始排课' }}
-</button>
 
+      <!-- Status Messages & Hints -->
+      <el-alert v-if="uploadStatus === 'uploading'" title="正在导入Excel文件，请稍候..." type="info" :closable="false" show-icon class="status-alert"/>
+      <el-alert v-if="successMessage" :title="successMessage" type="success" show-icon @close="successMessage=''" class="status-alert"/>
+      <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon @close="errorMessage=''" class="status-alert"/>
+      <el-alert v-if="schedulingMessage && schedulingStatus !== 'running'"
+           :title="schedulingMessage"
+           :type="getSchedulingAlertType()"
+           show-icon
+           @close="schedulingMessage=''"
+           class="status-alert"/>
+
+
+      <el-alert v-if="selectedSemesterId && !loading && coursePlans.length > 0" type="warning" show-icon :closable="false" class="status-alert">
+          <template #title>
+              提示: 从Excel导入将 <strong style="color: red;">覆盖</strong> 当前选定学期的所有课程计划。
+              Excel文件应包含列：'学期名称', '专业名称', '课程名称', '总课时', '课程类型', '授课教师姓名', '是否核心课程', '预计学生人数'。
+          </template>
+      </el-alert>
+
+      <!-- Table Area -->
+      <div v-if="selectedSemesterId">
+          <el-table
+            :data="coursePlans"
+            stripe
+            border
+            v-loading="loading"
+            style="width: 100%; margin-top: 20px;"
+            empty-text="当前学期没有课程计划数据"
+          >
+            <el-table-column prop="major_name" label="专业" width="200" align="center" />
+            <el-table-column prop="course_name" label="课程名称" width="200" align="center" />
+            <el-table-column prop="course_type" label="课程类型" width="120"  align="center"/>
+            <el-table-column prop="total_sessions" label="总学时" width="120" align="center" />
+            <el-table-column prop="teacher_name" label="授课教师" width="120" align="center" />
+            <el-table-column prop="is_core_course" label="核心课" width="100" align="center">
+              <template #default="scope">
+                <el-tag :type="scope.row.is_core_course ? 'success' : 'info'" disable-transitions>
+                  {{ scope.row.is_core_course ? '是' : '否' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="expected_students" label="预计人数" width="100" align="center" />
+            <el-table-column label="操作" width="220" fixed="right" align="center">
+              <template #default="scope">
+                <el-button
+                  type="primary"
+                  link
+                  size="large"
+                  :icon="Edit"
+                  @click="handleEditCourse(scope.row)"
+                >编辑</el-button>
+                <el-button
+                  type="danger"
+                  link
+                  size="large"
+                  :icon="Delete"
+                  @click="handleDeleteCourse(scope.row.id, scope.row.course_name)"
+                >删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
       </div>
-    </div>
+      <el-empty v-else description="请先选择一个学期以查看或管理课程计划" />
 
-    <div v-if="uploadStatus === 'uploading'" class="status-message info">正在导入Excel文件，请稍候...</div>
-    <div v-if="successMessage" class="status-message success" v-html="formatMessage(successMessage)"></div>
-    <div v-if="errorMessage" class="status-message error" v-html="formatMessage(errorMessage)"></div>
+    </el-card>
 
-    <p v-if="selectedSemesterId && !loadingStatus && coursePlans.length > 0" class="upload-hint">
-      提示: 从Excel导入将<strong style="color: red;">覆盖</strong>当前选定学期的所有课程计划。
-      Excel文件应包含列：'学期名称', '专业名称', '课程名称', '总课时', '课程类型', '授课教师姓名', '是否核心课程', '预计学生人数'。
-    </p>
+    <!-- Modal Dialog for Add/Edit Course Plan -->
+    <el-dialog
+      v-model="isModalOpen"
+      :title="modalMode === 'add' ? '添加新课程计划' : '编辑课程计划'"
+      width="60%"
+      :close-on-click-modal="false"
+      @close="closeModal"
+      top="5vh"
+      destroy-on-close
+    >
+      <el-form :model="currentPlan" ref="planFormRef" label-width="120px" :rules="planFormRules" v-loading="isFetchingDropdownData">
+         <el-alert v-if="modalErrorMessage" :title="modalErrorMessage" type="error" show-icon @close="modalErrorMessage=''" style="margin-bottom: 15px;"/>
 
-    <div v-if="loadingStatus === 'loading'" class="status-message info">正在加载课程计划...</div>
+         <el-row :gutter="20">
+            <el-col :span="12">
+               <el-form-item label="专业:" prop="major_id">
+                 <el-select v-model="currentPlan.major_id" placeholder="请选择专业" filterable clearable style="width: 100%;">
+                   <el-option
+                     v-for="major in majorsList"
+                     :key="major.id"
+                     :label="major.name"
+                     :value="major.id"
+                   />
+                 </el-select>
+               </el-form-item>
+            </el-col>
+            <el-col :span="12">
+               <el-form-item label="授课教师:" prop="teacher_id">
+                 <el-select v-model="currentPlan.teacher_id" placeholder="请选择教师" filterable clearable style="width: 100%;">
+                   <el-option
+                     v-for="teacher in teachersList"
+                     :key="teacher.id"
+                     :label="teacher.name"
+                     :value="teacher.id"
+                   />
+                 </el-select>
+               </el-form-item>
+            </el-col>
+         </el-row>
 
-    <div class="table-container" v-if="selectedSemesterId && coursePlans.length > 0">
-      <table>
-        <thead>
-          <tr>
-            <th>专业</th>
-            <th>课程名称</th>
-            <th>课程类型</th>
-            <th>总学时</th>
-            <th>授课教师</th>
-            <th>核心课</th>
-            <th>预计人数</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="plan in coursePlans" :key="plan.id">
-            <td>{{ plan.major_name }}</td>
-            <td>{{ plan.course_name }}</td>
-            <td>{{ plan.course_type }}</td>
-            <td>{{ plan.total_sessions }}</td>
-            <td>{{ plan.teacher_name }}</td>
-            <td>{{ plan.is_core_course ? '是' : '否' }}</td>
-            <td>{{ plan.expected_students }}</td>
-            <td>
-              <button class="button-link edit-button" @click="handleEditCourse(plan)">编辑</button>
-              <button class="button-link delete-button" @click="handleDeleteCourse(plan.id, plan.course_name)">删除</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <div v-if="selectedSemesterId && !loadingStatus && coursePlans.length === 0 && !errorMessage" class="status-message info">
-      当前学期没有课程计划数据。您可以手动添加或从Excel导入。
-    </div>
-     <div v-if="!selectedSemesterId && !loadingStatus" class="status-message info">
-      请先选择一个学期以查看或管理课程计划。
-    </div>
+          <el-row :gutter="20">
+            <el-col :span="12">
+                <el-form-item label="课程名称:" prop="course_name">
+                  <el-input v-model.trim="currentPlan.course_name" placeholder="请输入课程名称" clearable />
+                </el-form-item>
+            </el-col>
+             <el-col :span="12">
+                <el-form-item label="课程类型:" prop="course_type">
+                  <el-input v-model.trim="currentPlan.course_type" placeholder="例如: 理论课, 实验课" clearable />
+                </el-form-item>
+            </el-col>
+          </el-row>
 
+          <el-row :gutter="20">
+              <el-col :span="12">
+                <el-form-item label="总课时:" prop="total_sessions">
+                  <el-input-number v-model="currentPlan.total_sessions" :min="0" controls-position="right" style="width: 100%;"/>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="预计学生人数:" prop="expected_students">
+                  <el-input-number v-model="currentPlan.expected_students" :min="0" controls-position="right" style="width: 100%;"/>
+                </el-form-item>
+              </el-col>
+          </el-row>
 
-    <!-- Modal for Add/Edit Course Plan -->
-    <div v-if="isModalOpen" class="modal-overlay" @click.self="closeModal">
-      <div class="modal-content">
-        <h3 class="modal-title">{{ modalMode === 'add' ? '添加新课程计划' : '编辑课程计划' }}</h3>
-        <form @submit.prevent="handleSubmitPlan">
-          <div class="form-grid">
-            <div class="form-group">
-              <label for="plan-major">专业: <span class="required">*</span></label>
-              <select id="plan-major" v-model="currentPlan.major_id" required>
-                <option value="" disabled>请选择专业</option>
-                <option v-for="major in majorsList" :key="major.id" :value="major.id">
-                  {{ major.name }}
-                </option>
-              </select>
-            </div>
+          <el-form-item label="核心课程:" prop="is_core_course">
+            <el-checkbox v-model="currentPlan.is_core_course" label="是否核心课程" size="large"/>
+          </el-form-item>
+      </el-form>
 
-            <div class="form-group">
-              <label for="plan-teacher">授课教师: <span class="required">*</span></label>
-              <select id="plan-teacher" v-model="currentPlan.teacher_id" required>
-                <option value="" disabled>请选择教师</option>
-                <option v-for="teacher in teachersList" :key="teacher.id" :value="teacher.id">
-                  {{ teacher.name }}
-                </option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label for="plan-course-name">课程名称: <span class="required">*</span></label>
-              <input type="text" id="plan-course-name" v-model.trim="currentPlan.course_name" required />
-            </div>
-
-            <div class="form-group">
-              <label for="plan-course-type">课程类型:</label>
-              <input type="text" id="plan-course-type" v-model.trim="currentPlan.course_type" placeholder="例如: 理论课" />
-            </div>
-
-            <div class="form-group">
-              <label for="plan-total-sessions">总课时: <span class="required">*</span></label>
-              <input type="number" id="plan-total-sessions" v-model.number="currentPlan.total_sessions" required min="0" />
-            </div>
-
-            <div class="form-group">
-              <label for="plan-expected-students">预计学生人数: <span class="required">*</span></label>
-              <input type="number" id="plan-expected-students" v-model.number="currentPlan.expected_students" required min="0" />
-            </div>
-
-            <div class="form-group checkbox-group full-width">
-              <input type="checkbox" id="plan-is-core" v-model="currentPlan.is_core_course" />
-              <label for="plan-is-core">是否核心课程</label>
-            </div>
-          </div>
-
-          <div v-if="modalErrorMessage" class="status-message error modal-error">{{ modalErrorMessage }}</div>
-
-          <div class="modal-actions">
-            <button type="button" class="button cancel-button" @click="closeModal" :disabled="isSubmittingModal">取消</button>
-            <button type="submit" class="button success-button" :disabled="isSubmittingModal">
-              {{ isSubmittingModal ? '提交中...' : (modalMode === 'add' ? '添加计划' : '保存更改') }}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-<div v-if="schedulingStatus === 'running'" class="status-message info">正在执行排课，请稍候... 这可能需要一些时间。</div>
-<div v-if="schedulingMessage && schedulingStatus !== 'running'"
-     :class="['status-message', schedulingStatus === 'success' ? 'success' : (schedulingStatus === 'success_no_tasks' ? 'info' : 'error')]"
-     v-html="formatMessage(schedulingMessage)">
-</div>
-
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="closeModal" :disabled="isSubmittingModal">取消</el-button>
+          <el-button
+            type="primary"
+            @click="handleSubmitPlan"
+            :loading="isSubmittingModal"
+          >
+            {{ isSubmittingModal ? '提交中...' : (modalMode === 'add' ? '添加计划' : '保存更改') }}
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, reactive } from 'vue';
 import axios from 'axios';
+// Import Element Plus components and utilities
+import {
+    ElCard, ElForm, ElFormItem, ElSelect, ElOption, ElButton, ElInput, ElUpload, // ElUpload if using it
+    ElTable, ElTableColumn, ElTag, ElDialog, ElCheckbox, ElInputNumber, ElAlert, ElEmpty, ElRow, ElCol,
+    ElMessage, ElMessageBox, ElLoading
+} from 'element-plus';
+// Import Element Plus icons (make sure you've installed @element-plus/icons-vue)
+import { Plus, Download, Upload, Clock, Edit, Delete } from '@element-plus/icons-vue';
 
 // --- Configuration ---
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
-
 // --- State ---
 const semesters = ref([]);
-const selectedSemesterId = ref('');
+const selectedSemesterId = ref(null); // Use null for clearer initial state with el-select clearable
 const coursePlans = ref([]);
-const fileInputRef = ref(null); // Changed name to avoid conflict
-// const selectedFile = ref(null); // Not strictly needed if processed immediately
+const fileInputRef = ref(null);
 
 // --- Status Flags ---
-const loadingStatus = ref(''); // 'loading', ''
+const loading = ref(false); // Combined loading status for main data
 const errorMessage = ref('');
 const successMessage = ref('');
 const uploadStatus = ref(''); // 'uploading', 'success', 'error', ''
+const schedulingStatus = ref(''); // '', 'running', 'success', 'error', 'success_no_tasks'
+const schedulingMessage = ref('');
 
 // --- Modal State ---
 const isModalOpen = ref(false);
 const modalMode = ref('add'); // 'add' or 'edit'
-const currentPlan = ref({ // Initialize with all fields for reactivity
-  semester_id: '',
-  major_id: '',
+const planFormRef = ref(null); // Ref for the el-form instance
+const currentPlan = reactive({ // Use reactive for nested object changes
+  id: null, // Keep track of ID for editing
+  semester_id: null,
+  major_id: null,
   course_name: '',
   total_sessions: null,
-  course_type: '理论课', // Default
-  teacher_id: '',
+  course_type: '理论课',
+  teacher_id: null,
   is_core_course: false,
   expected_students: null,
 });
-const editingPlanId = ref(null); // Stores course_assignments.id for editing
-// const editingOriginalCourseId = ref(null); // Not strictly needed for current backend PUT
+// const editingPlanId = ref(null); // No longer needed if ID is in currentPlan
 const majorsList = ref([]);
 const teachersList = ref([]);
 const modalErrorMessage = ref('');
 const isSubmittingModal = ref(false);
-// ... (existing imports and state) ...
-const schedulingStatus = ref(''); // '', 'running', 'success', 'error'
-const schedulingMessage = ref('');
+const isFetchingDropdownData = ref(false); // Loading state for dropdowns in modal
 
-// ... (existing methods) ...
-
-const triggerScheduling = async () => {
-  if (!selectedSemesterId.value) {
-    errorMessage.value = '请先选择一个学期以进行排课。'; // Use existing errorMessage or a new one
-    return;
-  }
-  if (!window.confirm(`确定要为选定学期【${semesters.value.find(s=>s.id === selectedSemesterId.value)?.name}】开始自动排课吗？这将清空该学期现有排课结果并重新生成。`)) {
-    return;
-  }
-
-  schedulingStatus.value = 'running';
-  schedulingMessage.value = '';
-  errorMessage.value = ''; // Clear other messages
-  successMessage.value = '';
-
-  try {
-    const response = await axios.post(`${API_BASE_URL}/api/schedule/run/${selectedSemesterId.value}`);
-    schedulingStatus.value = 'success';
-
-    let summaryText = `排课完成： ${response.data.message}\n`;
-
-    // 检查 response.data.summary 是否存在且是对象
-    if (response.data.summary && typeof response.data.summary === 'object') {
-        const summary = response.data.summary; // 简化引用
-
-        // 使用后端实际返回的键名来访问数据
-        // 注意：这里的标签文字可以根据实际统计含义调整，比如processed_assignments可能翻译成“已处理的课程计划数”
-
-        // 检查后端的 errors 列表并显示
-        if(summary.errors && summary.errors.length > 0) {
-            summaryText += "错误/警告详情:\n" + summary.errors.join("\n"); // 对应后端的 errors
-        }
-    } else {
-         // 如果 summary 字段缺失或不是预期的格式，也给出提示
-         summaryText += "排课统计信息缺失或格式不正确。\n";
-         console.warn("Backend did not return a valid summary object:", response.data.summary);
-    }
-
-    schedulingMessage.value = summaryText;
-    successMessage.value = summaryText;
-    // Optionally refresh course plans if they might be affected or to show new status
-    // await fetchCoursePlans();
-  } catch (error) {
-    console.error('排课执行失败:', error);
-    schedulingStatus.value = 'error';
-    // Ensure error.response?.data?.message is handled gracefully
-    const errorMessageText = error.response?.data?.message || error.message || '未知错误';
-    schedulingMessage.value = `排课失败: ${errorMessageText}`;
-    errorMessage.value = schedulingMessage.value;
-  } finally {
-     if (schedulingStatus.value === 'running') schedulingStatus.value = '';
-  }
-};
-
-// ... 其余的代码保持不变 ...
-
+// --- Form Validation Rules ---
+const planFormRules = reactive({
+  major_id: [{ required: true, message: '请选择专业', trigger: 'change' }],
+  teacher_id: [{ required: true, message: '请选择授课教师', trigger: 'change' }],
+  course_name: [{ required: true, message: '请输入课程名称', trigger: 'blur' }],
+  total_sessions: [
+    { required: true, message: '请输入总课时', trigger: 'blur' },
+    { type: 'number', message: '总课时必须是数字', trigger: ['blur', 'change']},
+    { validator: (rule, value, callback) => value >= 0 ? callback() : callback(new Error('总课时不能为负数')), trigger: 'blur'}
+  ],
+  expected_students: [
+    { required: true, message: '请输入预计学生人数', trigger: 'blur' },
+    { type: 'number', message: '预计人数必须是数字', trigger: ['blur', 'change']},
+    { validator: (rule, value, callback) => value >= 0 ? callback() : callback(new Error('预计人数不能为负数')), trigger: 'blur'}
+  ],
+  // course_type is not strictly required based on original code
+});
 
 
 // --- Lifecycle Hooks ---
 onMounted(async () => {
   await fetchSemesters();
-  // Initial fetch of dropdown data for modal, can be moved to openModal if preferred
-  await fetchModalDropdownData();
+  // Lazy load dropdown data when modal opens for the first time
+  // await fetchModalDropdownData(); // Or load here if preferred
 });
 
-watch(selectedSemesterId, (newVal, oldVal) => {
-  if (newVal && newVal !== oldVal) {
-    clearMainMessages();
-    coursePlans.value = []; // Clear plans immediately
-    fetchCoursePlans(); // Auto-fetch when semester changes and is valid
-  } else if (!newVal) {
-    coursePlans.value = []; // Clear plans if semester is deselected
-    clearMainMessages();
-  }
+// Watcher for semester change
+watch(selectedSemesterId, (newVal) => {
+  handleSemesterChange(newVal); // Call handler function
 });
+
 
 // --- Methods ---
+
 const clearMainMessages = () => {
     errorMessage.value = '';
     successMessage.value = '';
+    schedulingMessage.value = '';
     // uploadStatus is handled separately
 };
 
-const formatMessage = (message) => {
-    // Replace newlines with <br> for HTML display
-    return message.replace(/\n/g, '<br>');
+const handleSemesterChange = (semesterId) => {
+    clearMainMessages();
+    coursePlans.value = []; // Clear plans immediately
+    if (semesterId) {
+        fetchCoursePlans(); // Auto-fetch when semester changes and is valid
+    }
 };
 
+
 const fetchSemesters = async () => {
-  loadingStatus.value = 'loading';
+  loading.value = true;
   try {
     const response = await axios.get(`${API_BASE_URL}/api/semesters`);
     semesters.value = response.data;
-    // If there's a previously selected semester or only one semester, select it?
-    // For now, requires manual selection.
   } catch (error) {
     console.error('获取学期列表失败:', error);
-    errorMessage.value = `获取学期列表失败: ${error.response?.data?.message || error.message}`;
+    ElMessage.error(`获取学期列表失败: ${error.response?.data?.message || error.message}`);
   } finally {
-    loadingStatus.value = '';
+    loading.value = false;
   }
 };
 
@@ -309,7 +338,7 @@ const fetchCoursePlans = async () => {
     coursePlans.value = [];
     return;
   }
-  loadingStatus.value = 'loading';
+  loading.value = true;
   clearMainMessages();
   try {
     const response = await axios.get(`${API_BASE_URL}/api/course-plans`, {
@@ -320,8 +349,9 @@ const fetchCoursePlans = async () => {
     console.error('获取课程计划失败:', error);
     coursePlans.value = []; // Clear on error
     errorMessage.value = `获取课程计划失败: ${error.response?.data?.message || error.message}`;
+    // ElMessage.error(`获取课程计划失败: ${error.response?.data?.message || error.message}`); // Use alert or message
   } finally {
-    loadingStatus.value = '';
+    loading.value = false;
   }
 };
 
@@ -336,12 +366,15 @@ const handleFileSelected = (event) => {
   if (file) {
     handleImportExcel(file);
   }
-  fileInputRef.value.value = ''; // Reset file input
+  // Reset file input value so @change triggers again for the same file
+  if (fileInputRef.value) {
+      fileInputRef.value.value = '';
+  }
 };
 
 const handleImportExcel = async (file) => {
   if (!selectedSemesterId.value) {
-    errorMessage.value = '请先选择一个学期才能导入课程计划。';
+    ElMessage.warning('请先选择一个学期才能导入课程计划。');
     return;
   }
   clearMainMessages();
@@ -358,19 +391,23 @@ const handleImportExcel = async (file) => {
       }
     });
     successMessage.value = response.data.message || 'Excel文件导入成功！';
+    // ElMessage.success(response.data.message || 'Excel文件导入成功！'); // Alternative
     uploadStatus.value = 'success';
     await fetchCoursePlans(); // Refresh list
   } catch (error) {
     console.error('Excel导入失败:', error);
     errorMessage.value = `Excel导入失败: ${error.response?.data?.message || '未知错误，请检查文件格式或联系管理员。'}`;
+    // ElMessage.error(`Excel导入失败: ${error.response?.data?.message || '未知错误'}`); // Alternative
     uploadStatus.value = 'error';
   } finally {
-     if (uploadStatus.value === 'uploading') uploadStatus.value = ''; // Reset if still uploading (e.g. network error)
+     // Reset status only if it was uploading, might have finished with success/error
+     if (uploadStatus.value === 'uploading') uploadStatus.value = '';
   }
 };
 
 const handleDownloadTemplate = async () => {
   clearMainMessages();
+  const loadingInstance = ElLoading.service({ text: '正在准备模板下载...' });
   try {
     const response = await axios.get(`${API_BASE_URL}/api/course-plans/template`, {
       responseType: 'blob',
@@ -382,40 +419,59 @@ const handleDownloadTemplate = async () => {
     let fileName = 'course_plan_template.xlsx';
     if (contentDisposition) {
         const fileNameMatch = contentDisposition.match(/filename="?(.+)"?/i);
-        if (fileNameMatch && fileNameMatch.length === 2) fileName = fileNameMatch[1];
+        if (fileNameMatch && fileNameMatch.length === 2) fileName = decodeURIComponent(fileNameMatch[1]); // Decode filename
     }
     link.setAttribute('download', fileName);
     document.body.appendChild(link);
     link.click();
     link.remove();
     window.URL.revokeObjectURL(url);
-    successMessage.value = '课程计划模板已开始下载。';
+    ElMessage.success('课程计划模板已开始下载。');
   } catch (error) {
     console.error('下载模板失败:', error);
-    errorMessage.value = `下载模板失败: ${error.response?.data?.message || error.message}`;
+    ElMessage.error(`下载模板失败: ${error.response?.data?.message || error.message}`);
+  } finally {
+      loadingInstance.close();
   }
 };
 
 const handleDeleteCourse = async (planId, courseName) => {
-  if (!window.confirm(`确定要删除课程计划 “${courseName}” (ID: ${planId}) 吗？此操作不可恢复。`)) {
-    return;
-  }
-  clearMainMessages();
-  try {
-    await axios.delete(`${API_BASE_URL}/api/course-plans/${planId}`);
-    successMessage.value = `课程计划 “${courseName}” (ID: ${planId}) 已成功删除！`;
-    await fetchCoursePlans();
-  } catch (error) {
-    console.error(`删除课程计划 ${planId} 失败:`, error);
-    errorMessage.value = `删除失败: ${error.response?.data?.message || error.message}`;
-  }
+    try {
+        await ElMessageBox.confirm(
+            `确定要删除课程计划 “${courseName}” (ID: ${planId}) 吗？此操作不可恢复。`,
+            '确认删除',
+            {
+                confirmButtonText: '确定删除',
+                cancelButtonText: '取消',
+                type: 'warning',
+            }
+        );
+        // User confirmed
+        clearMainMessages();
+        loading.value = true; // Indicate loading during delete
+        try {
+            await axios.delete(`${API_BASE_URL}/api/course-plans/${planId}`);
+            ElMessage.success(`课程计划 “${courseName}” 已成功删除！`);
+            await fetchCoursePlans(); // Refresh list
+        } catch (error) {
+            console.error(`删除课程计划 ${planId} 失败:`, error);
+            ElMessage.error(`删除失败: ${error.response?.data?.message || error.message}`);
+        } finally {
+            loading.value = false;
+        }
+    } catch (action) {
+        // User clicked cancel or closed the box
+        if (action === 'cancel') {
+            ElMessage.info('已取消删除');
+        }
+    }
 };
 
+
 const fetchModalDropdownData = async () => {
-    // This can be called onMounted or when opening modal for the first time
     if (majorsList.value.length > 0 && teachersList.value.length > 0) return; // Already loaded
 
-    isSubmittingModal.value = true; // Use to indicate loading for dropdowns
+    isFetchingDropdownData.value = true;
     modalErrorMessage.value = '';
     try {
         const [majorsRes, teachersRes] = await Promise.all([
@@ -426,44 +482,48 @@ const fetchModalDropdownData = async () => {
         teachersList.value = teachersRes.data;
     } catch (error) {
         console.error('加载专业/教师列表失败:', error);
-        // Show error in modal or main page
-        modalErrorMessage.value = '加载专业或教师列表失败，请稍后重试或检查网络连接。';
+        modalErrorMessage.value = '加载下拉选项失败，请稍后重试。';
+        // Close modal if critical data failed? Or disable form fields?
     } finally {
-        isSubmittingModal.value = false;
+        isFetchingDropdownData.value = false;
     }
 };
 
 const openModal = async (mode, plan = null) => {
   modalMode.value = mode;
   modalErrorMessage.value = '';
-  isSubmittingModal.value = false;
 
-  // Ensure dropdown data is available
-  if (majorsList.value.length === 0 || teachersList.value.length === 0) {
-      await fetchModalDropdownData();
-      if (modalErrorMessage.value && (majorsList.value.length === 0 || teachersList.value.length === 0)) {
-          // If fetching critical data failed, don't open modal and show main error
-          errorMessage.value = modalErrorMessage.value || '无法打开表单：缺少必要数据。';
-          isModalOpen.value = false;
-          return;
-      }
+  // Ensure dropdown data is available, fetch if needed
+  await fetchModalDropdownData();
+  if (isFetchingDropdownData.value) { // Still fetching? Wait maybe? Or disable form?
+       console.warn("Dropdown data still fetching, modal opened.");
+       // Could show a loading indicator inside the form instead
+  }
+  if (modalErrorMessage.value) { // If fetch failed
+       ElMessage.error('无法加载表单所需数据，请稍后再试。');
+       return; // Don't open modal if critical data missing
   }
 
+
   if (mode === 'add') {
-    currentPlan.value = {
+    // Reset reactive object fields
+    Object.assign(currentPlan, {
+      id: null,
       semester_id: selectedSemesterId.value, // Auto-set current semester
-      major_id: '',
+      major_id: null,
       course_name: '',
       total_sessions: null,
       course_type: '理论课',
-      teacher_id: '',
+      teacher_id: null,
       is_core_course: false,
       expected_students: null,
-    };
-    editingPlanId.value = null;
+    });
+    // editingPlanId.value = null; // Not needed if ID is in currentPlan
   } else if (mode === 'edit' && plan) {
-    currentPlan.value = {
-      semester_id: plan.semester_id, // Keep existing semester_id
+    // Assign values from the selected plan
+     Object.assign(currentPlan, {
+      id: plan.id, // This is course_assignments.id
+      semester_id: plan.semester_id,
       major_id: plan.major_id,
       teacher_id: plan.teacher_id,
       course_name: plan.course_name,
@@ -471,23 +531,30 @@ const openModal = async (mode, plan = null) => {
       course_type: plan.course_type,
       is_core_course: plan.is_core_course,
       expected_students: plan.expected_students,
-    };
-    editingPlanId.value = plan.id; // This is course_assignments.id
+    });
+    // editingPlanId.value = plan.id; // Not needed
   }
   isModalOpen.value = true;
+  // Reset validation state after modal opens and form is rendered
+  await nextTick(); // Wait for DOM update
+  if (planFormRef.value) {
+      planFormRef.value.clearValidate();
+  }
 };
 
 const closeModal = () => {
   isModalOpen.value = false;
-  // Reset currentPlan carefully if fields are bound directly
-   currentPlan.value = { semester_id: '', major_id: '', course_name: '', total_sessions: null, course_type: '理论课', teacher_id: '', is_core_course: false, expected_students: null, };
-  editingPlanId.value = null;
-  modalErrorMessage.value = '';
+  if (planFormRef.value) {
+    planFormRef.value.resetFields(); // Resets to initial values (might require prop setting in el-form-item) or clearValidate()
+  }
+   // Explicitly reset reactive object to default state if resetFields is not enough
+    Object.assign(currentPlan, { id: null, semester_id: null, major_id: null, course_name: '', total_sessions: null, course_type: '理论课', teacher_id: null, is_core_course: false, expected_students: null, });
+    modalErrorMessage.value = '';
 };
 
 const handleManualAdd = () => {
   if (!selectedSemesterId.value) {
-    errorMessage.value = '请先选择一个学期才能添加课程计划。';
+    ElMessage.warning('请先选择一个学期才能添加课程计划。');
     return;
   }
   openModal('add');
@@ -498,50 +565,143 @@ const handleEditCourse = (plan) => {
 };
 
 const handleSubmitPlan = async () => {
-  modalErrorMessage.value = '';
-  isSubmittingModal.value = true;
+  if (!planFormRef.value) return;
 
-  const payload = { ...currentPlan.value };
-  // Ensure numeric fields are numbers, not strings from input type="number"
-  payload.total_sessions = Number(payload.total_sessions);
-  payload.expected_students = Number(payload.expected_students);
+  await planFormRef.value.validate(async (valid) => {
+    if (valid) {
+      modalErrorMessage.value = '';
+      isSubmittingModal.value = true;
+
+      const payload = { ...currentPlan }; // Get current values from reactive object
+       // Ensure semester_id is set correctly, especially for 'add' mode
+      if (modalMode.value === 'add' && !payload.semester_id) {
+          payload.semester_id = selectedSemesterId.value;
+      }
+
+       if (!payload.semester_id) { // Final check
+           modalErrorMessage.value = '未指定学期，无法提交。';
+           isSubmittingModal.value = false;
+           return;
+       }
 
 
-  // Basic client-side validation (backend will also validate)
-  if (!payload.major_id || !payload.course_name || !payload.teacher_id ||
-      payload.total_sessions === null || payload.total_sessions < 0 ||
-      payload.expected_students === null || payload.expected_students < 0 ) {
-      modalErrorMessage.value = '请填写所有必填项 (*)，并确保数值非负。';
-      isSubmittingModal.value = false;
-      return;
-  }
-  if (!payload.semester_id && modalMode.value === 'add') { // semester_id must be present for add
-     payload.semester_id = selectedSemesterId.value; // re-ensure
-     if(!payload.semester_id) {
-        modalErrorMessage.value = '未指定学期，无法添加。';
+      try {
+        clearMainMessages(); // Clear main page messages before new action
+        if (modalMode.value === 'add') {
+          // No ID in payload for POST
+          const { id, ...addPayload } = payload;
+          await axios.post(`${API_BASE_URL}/api/course-plans`, addPayload);
+          ElMessage.success('新课程计划添加成功！');
+        } else { // 'edit'
+          // Send PUT request with ID in URL, payload contains updated data
+          await axios.put(`${API_BASE_URL}/api/course-plans/${payload.id}`, payload);
+          ElMessage.success(`课程计划 (ID: ${payload.id}) 更新成功！`);
+        }
+        closeModal();
+        await fetchCoursePlans(); // Refresh the list
+      } catch (error) {
+        console.error('保存课程计划失败:', error);
+        modalErrorMessage.value = `保存失败: ${error.response?.data?.message || error.message}`;
+      } finally {
         isSubmittingModal.value = false;
-        return;
-     }
-  }
-
-
-  try {
-    clearMainMessages(); // Clear main page messages before new action
-    if (modalMode.value === 'add') {
-      await axios.post(`${API_BASE_URL}/api/course-plans`, payload);
-      successMessage.value = '新课程计划添加成功！';
-    } else { // 'edit'
-      await axios.put(`${API_BASE_URL}/api/course-plans/${editingPlanId.value}`, payload);
-      successMessage.value = `课程计划 (ID: ${editingPlanId.value}) 更新成功！`;
+      }
+    } else {
+      console.log('表单验证失败');
+      modalErrorMessage.value = '请检查表单输入项。';
+      return false;
     }
-    closeModal();
-    await fetchCoursePlans(); // Refresh the list
-  } catch (error) {
-    console.error('保存课程计划失败:', error);
-    modalErrorMessage.value = `保存失败: ${error.response?.data?.message || error.message}`;
-  } finally {
-    isSubmittingModal.value = false;
+  });
+};
+
+const triggerScheduling = async () => {
+  if (!selectedSemesterId.value) {
+    ElMessage.warning('请先选择一个学期以进行排课。');
+    return;
   }
+  try {
+      const semesterName = semesters.value.find(s=>s.id === selectedSemesterId.value)?.name || `ID: ${selectedSemesterId.value}`;
+      await ElMessageBox.confirm(
+          `确定要为选定学期【${semesterName}】开始自动排课吗？<br/><strong>这将清空该学期现有排课结果并重新生成。</strong>`,
+          '确认排课',
+          {
+              confirmButtonText: '开始排课',
+              cancelButtonText: '取消',
+              type: 'warning',
+              dangerouslyUseHTMLString: true, // Allow <br> and <strong>
+          }
+      );
+      // User confirmed
+      schedulingStatus.value = 'running';
+      schedulingMessage.value = '';
+      clearMainMessages(); // Clear other messages
+      errorMessage.value = ''; // Specifically clear error message
+      successMessage.value = ''; // Specifically clear success message
+
+      const loadingInstance = ElLoading.service({
+          lock: true,
+          text: '正在执行排课，请稍候...',
+          background: 'rgba(0, 0, 0, 0.7)',
+      });
+
+      try {
+          const response = await axios.post(`${API_BASE_URL}/api/schedule/run/${selectedSemesterId.value}`);
+          schedulingStatus.value = 'success'; // Assume success unless response indicates otherwise
+
+          let summaryText = `排课完成：${response.data.message}\n`;
+           // Check response.data.summary and format message...
+          if (response.data.summary && typeof response.data.summary === 'object') {
+              const summary = response.data.summary;
+              // Example: Append details if available
+              // if (summary.assignments_processed) summaryText += `处理计划数: ${summary.assignments_processed}\n`;
+              // if (summary.entries_created) summaryText += `生成条目数: ${summary.entries_created}\n`;
+              if (summary.errors && summary.errors.length > 0) {
+                 summaryText += "\n错误/警告详情:\n" + summary.errors.join("\n");
+                 // Determine overall status based on errors
+                 if (response.data.message.includes("部分")) { // Example check
+                     schedulingStatus.value = 'warning'; // Or keep 'success' if it's just warnings
+                 } else {
+                    // Maybe still 'success' if backend considers it successful despite warnings
+                 }
+              } else if(response.data.message.includes("没有需要排课")) {
+                  schedulingStatus.value = 'success_no_tasks';
+              }
+          } else {
+              summaryText += "未能获取详细排课统计信息。\n";
+              console.warn("Backend did not return a valid summary object:", response.data.summary);
+              if (response.data.message.includes("没有需要排课")) {
+                  schedulingStatus.value = 'success_no_tasks';
+              }
+          }
+          schedulingMessage.value = summaryText;
+          // Decide if you want this in successMessage too or just the specific scheduling alert
+          // successMessage.value = summaryText;
+
+      } catch (error) {
+          console.error('排课执行失败:', error);
+          schedulingStatus.value = 'error';
+          const errorMsgText = error.response?.data?.message || error.message || '未知错误';
+          schedulingMessage.value = `排课失败: ${errorMsgText}`;
+      } finally {
+          loadingInstance.close();
+           // Don't reset running status here, let the success/error state persist
+           // if (schedulingStatus.value === 'running') schedulingStatus.value = '';
+      }
+  } catch (action) {
+        if (action === 'cancel') {
+            ElMessage.info('已取消排课');
+        }
+  }
+};
+
+// Helper to determine alert type for scheduling message
+const getSchedulingAlertType = () => {
+    switch (schedulingStatus.value) {
+        case 'success': return 'success';
+        case 'success_no_tasks': return 'info';
+        case 'error': return 'error';
+        case 'warning': return 'warning'; // If you add a warning status
+        default: return 'info';
+    }
 };
 
 </script>
@@ -549,261 +709,48 @@ const handleSubmitPlan = async () => {
 <style scoped>
 .course-plan-management {
   padding: 20px;
-  font-family: Arial, sans-serif;
-  max-width: 1200px;
-  margin: auto;
 }
-/* In <style scoped> */
-.warning-button { background-color: #ffc107; color: #212529; }
-.warning-button:hover:not(:disabled) { background-color: #e0a800; }
-.icon-schedule::before { content: '📅'; /* Or a better icon */ }
-
-h2 {
-  text-align: center;
-  color: #333;
-  margin-bottom: 25px;
-}
-
-.header-controls {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  padding: 15px;
-  background-color: #f8f9fa;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.semester-selector {
-  display: flex;
-  align-items: center;
-}
-.semester-selector label {
-  margin-right: 10px;
-  font-weight: bold;
-}
-.semester-selector select {
-  padding: 8px 12px;
-  border-radius: 4px;
-  border: 1px solid #ced4da;
-  min-width: 200px;
-}
-
-.action-buttons button {
-  margin-left: 10px;
-  padding: 8px 15px;
-  border-radius: 4px;
-  border: none;
-  cursor: pointer;
-  font-size: 0.9em;
-  transition: background-color 0.2s ease;
-}
-.action-button {
-  display: inline-flex;
-  align-items: center;
-}
-.action-button i {
-  margin-right: 6px;
-}
-
-.primary-button { background-color: #007bff; color: white; }
-.primary-button:hover:not(:disabled) { background-color: #0056b3; }
-.success-button { background-color: #28a745; color: white; }
-.success-button:hover:not(:disabled) { background-color: #1e7e34; }
-.action-button:disabled {
-  background-color: #cccccc;
-  color: #666666;
-  cursor: not-allowed;
-}
-
-
-.upload-hint {
-  font-size: 0.9em;
-  color: #666;
-  margin-bottom: 15px;
-  padding: 10px;
-  background-color: #e9ecef;
-  border-left: 3px solid #007bff;
-  border-radius: 4px;
-}
-
-.status-message {
-  padding: 12px 18px;
-  margin-bottom: 15px;
-  border-radius: 5px;
-  font-size: 0.95em;
-  border: 1px solid transparent;
-}
-.status-message.info { background-color: #e6f7ff; border-color: #91d5ff; color: #005280; }
-.status-message.success { background-color: #e6ffed; border-color: #b7eb8f; color: #135200; }
-.status-message.error { background-color: #fff1f0; border-color: #ffa39e; color: #a8071a; }
-
-
-.table-container {
-  margin-top: 20px;
-  overflow-x: auto; /* For responsive tables on small screens */
-}
-table {
-  width: 100%;
-  border-collapse: collapse;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-th, td {
-  border: 1px solid #dee2e6;
-  padding: 10px 12px;
-  text-align: left;
-  font-size: 0.9em;
-}
-th {
-  background-color: #f2f2f2;
-  font-weight: bold;
-  color: #333;
-}
-tbody tr:nth-child(even) {
-  background-color: #f9f9f9;
-}
-tbody tr:hover {
-  background-color: #e9ecef;
-}
-
-.button-link {
-  background: none;
-  border: none;
-  padding: 0;
-  font-family: inherit;
-  font-size: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-  margin-right: 10px;
-}
-.edit-button { color: #007bff; }
-.edit-button:hover { color: #0056b3; }
-.delete-button { color: #dc3545; }
-.delete-button:hover { color: #a71d2a; }
-
-
-/* Modal Styles */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.6);
+.card-header {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000;
-  padding: 15px; /* For small screens, so modal doesn't touch edges */
-}
-
-.modal-content {
-  background-color: white;
-  padding: 25px 30px;
-  border-radius: 8px;
-  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-  width: 100%;
-  max-width: 650px; /* Wider modal for more fields */
-  max-height: 90vh;
-  overflow-y: auto;
-}
-
-.modal-title {
-  margin-top: 0;
-  margin-bottom: 20px;
-  font-size: 1.4em;
-  color: #333;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 10px;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); /* Responsive grid */
-  gap: 15px 20px; /* Row gap, Column gap */
-}
-
-.form-group {
-  /* Removed margin-bottom as gap is handled by grid */
-}
-.form-group.full-width {
-  grid-column: 1 / -1; /* Span full width */
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 6px;
+  font-size: 2.0em;
   font-weight: bold;
-  font-size: 0.9em;
-  color: #555;
 }
-.required { color: red; margin-left: 2px; }
-
-.form-group input[type="text"],
-.form-group input[type="number"],
-.form-group select {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  box-sizing: border-box;
-  font-size: 1em;
+.header-controls {
+  margin-bottom: 15px;
+  /* display: flex; Should be handled by el-form inline */
+  /* justify-content: space-between; */
+  /* align-items: center; */
 }
-.form-group input[type="text"]:focus,
-.form-group input[type="number"]:focus,
-.form-group select:focus {
-  border-color: #007bff;
-  outline: none;
-  box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+.control-form .el-form-item {
+    margin-bottom: 10px; /* Adjust spacing for inline form */
+    margin-right: 15px;
+}
+.semester-selector-item {
+    margin-right: 30px !important; /* Add more space after semester selector */
 }
 
-.form-group.checkbox-group {
-  display: flex;
-  align-items: center;
-  padding-top: 10px; /* Align with other labels if they have margin-bottom */
-}
-.form-group.checkbox-group input[type="checkbox"] {
-  margin-right: 8px;
-  width: auto;
-  height: auto; /* Use browser default */
-  vertical-align: middle;
-  transform: scale(1.1);
-}
-.form-group.checkbox-group label {
-  margin-bottom: 0;
-  font-weight: normal;
+.status-alert {
+    margin-bottom: 15px;
 }
 
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 25px;
-  padding-top: 15px;
-  border-top: 1px solid #eee;
-}
-.modal-actions .button {
-  padding: 10px 20px;
-  margin-left: 10px;
-}
-.modal-actions .cancel-button {
-  background-color: #6c757d;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.modal-actions .cancel-button:hover:not(:disabled) { background-color: #545b62; }
-
-
-.status-message.modal-error {
-    margin-top: 15px;
-    margin-bottom: 0;
-    grid-column: 1 / -1; /* Span full width if inside grid */
+/* Reduce default padding in table cells for denser view */
+.el-table th.el-table__cell, .el-table td.el-table__cell {
+    padding: 8px 10px;
 }
 
-/* Icons (simple text based, replace with actual icon font/svg if available) */
-.icon-add::before { content: '➕'; }
-.icon-download::before { content: '📄'; }
-.icon-upload::before { content: '📤'; }
+.dialog-footer {
+    text-align: right;
+}
+
+/* Style for the checkbox label */
+.el-form-item__content .el-checkbox {
+    line-height: normal; /* Adjust if needed */
+}
+.el-form-item__content .el-checkbox__label {
+    padding-left: 8px;
+}
+
+
 </style>

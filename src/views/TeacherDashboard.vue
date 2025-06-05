@@ -1,128 +1,169 @@
 <template>
-  <div class="teacher-dashboard-layout">
-    <aside class="sidebar">
-      <h2>教师功能</h2>
-      <nav>
-        <ul>
-          <li><router-link to="/teacher/timetable" active-class="active-link">查询课表</router-link></li>
-          <li><router-link to="/teacher/scheduling-request" active-class="active-link">提出排课要求</router-link></li>
-        </ul>
-      </nav>
-      <div class="user-info">
-        <p>欢迎您，{{ loggedInUsername }}！</p>
-        <button @click="logout" class="logout-button">退出登录</button>
-      </div>
-    </aside>
+  <el-container class="teacher-dashboard-layout">
+    <el-aside width="250px" class="sidebar">
+      <div class="sidebar-content">
+        <h2 class="sidebar-title">教师功能</h2>
+        <el-menu
+          :default-active="activeMenu"
+          class="el-menu-vertical-teacher"
+          router
+          background-color="#343a40"
+          text-color="#ffffff"
+          active-text-color="#ffd04b"
+        >
+          <el-menu-item index="/teacher/timetable">
+            <el-icon><Calendar /></el-icon>
+            <span>查询课表</span>
+          </el-menu-item>
+          <el-menu-item index="/teacher/scheduling-request">
+            <el-icon><MessageBox /></el-icon> <!-- Or EditPen -->
+            <span>提出排课要求</span>
+          </el-menu-item>
+          <!-- Add more menu items here if needed -->
+        </el-menu>
 
-    <main class="main-content">
-      <router-view />
-    </main>
-  </div>
+        <div class="user-info">
+          <p>欢迎您，{{ loggedInUsername }}！</p>
+          <el-button type="danger" @click="logout" class="logout-button" plain>
+            退出登录
+          </el-button>
+        </div>
+      </div>
+    </el-aside>
+
+    <el-main class="main-content">
+      <!-- Content area -->
+      <router-view v-slot="{ Component }">
+        <transition name="fade-transform" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
+    </el-main>
+  </el-container>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import {
+  ElContainer, ElAside, ElMain, ElMenu, ElMenuItem, ElButton, ElIcon
+} from 'element-plus';
+// Import desired icons (ensure @element-plus/icons-vue is installed)
+import { Calendar, MessageBox, EditPen } from '@element-plus/icons-vue'; // Choose appropriate icons
 
 const router = useRouter();
+const route = useRoute(); // Get current route information
 const loggedInUsername = ref('');
 
 onMounted(() => {
   loggedInUsername.value = localStorage.getItem('username') || '教师用户';
 });
 
+// Calculate the active menu item based on the current route
+const activeMenu = computed(() => {
+  const { path } = route;
+  return path;
+});
+
 const logout = () => {
-  // 清除用户登录状态和用户名
+  // Clear user login status and username
   localStorage.removeItem('token');
   localStorage.removeItem('userRole');
   localStorage.removeItem('username');
-  router.push('/login'); // 跳转回登录页面
+  router.push('/login'); // Redirect to login page
+  // Optional: Show a success message
+  // import { ElMessage } from 'element-plus';
+  // ElMessage.success('已成功退出登录');
 };
 </script>
 
 <style scoped>
 .teacher-dashboard-layout {
-  display: flex;
-  min-height: 100vh; /* 确保整个页面高度 */
-  background-color: #f8f9fa; /* 轻微的背景色 */
+  min-height: 100vh;
+  background-color: var(--el-bg-color-page); /* Use Element Plus page background variable */
 }
 
 .sidebar {
-  width: 250px;
-  background-color: #343a40; /* 深色背景 */
-  color: white;
-  padding: 20px;
+  background-color: #343a40; /* Keep dark background */
   box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+  /* el-aside handles width */
+}
+
+.sidebar-content {
+  height: 100%;
   display: flex;
   flex-direction: column;
-  justify-content: space-between; /* 将用户信息推到底部 */
+  justify-content: space-between; /* Push user info to bottom */
 }
 
-.sidebar h2 {
-  color: #007bff; /* 蓝色强调色 */
-  margin-bottom: 30px;
-  text-align: center;
-}
-
-.sidebar nav ul {
-  list-style: none;
-  padding: 0;
+.sidebar-title {
+  color: var(--el-color-primary); /* Use Element Plus primary color */
   margin: 0;
+  padding: 20px;
+  text-align: center;
+  font-size: 1.4em;
+  font-weight: 600;
 }
 
-.sidebar nav ul li {
-  margin-bottom: 10px;
+/* Remove default right border from vertical menu */
+.el-menu-vertical-teacher {
+  border-right: none;
+  flex-grow: 1; /* Allow menu to fill space */
+  overflow-y: auto; /* Scroll if menu items exceed height */
 }
 
-.sidebar nav ul li a {
-  display: block;
-  color: white;
-  text-decoration: none;
-  padding: 10px 15px;
-  border-radius: 4px;
-  transition: background-color 0.3s ease;
+/* Customize active menu item background */
+.el-menu-item.is-active {
+  background-color: var(--el-color-primary-light-8) !important; /* Example active background */
+  /* active-text-color handles text color */
 }
 
-.sidebar nav ul li a:hover,
-.sidebar nav ul li a.active-link {
-  background-color: #007bff; /* 选中或悬停时的背景色 */
+/* Customize menu item hover background */
+.el-menu-item:hover {
+  background-color: #495057 !important; /* Darker hover background */
+}
+
+/* Icon styling */
+.el-menu-item .el-icon {
+  margin-right: 8px;
+  vertical-align: middle;
 }
 
 .user-info {
-  margin-top: auto; /* 自动将此部分推到底部 */
-  padding-top: 20px;
-  border-top: 1px solid #495057; /* 分隔线 */
+  padding: 20px;
   text-align: center;
+  border-top: 1px solid #495057; /* Separator line */
 }
 
 .user-info p {
   margin-bottom: 15px;
   font-size: 0.9em;
-  color: #adb5bd; /* 较浅的文本颜色 */
+  color: #adb5bd; /* Lighter text color */
 }
 
 .logout-button {
   width: 100%;
-  padding: 10px 15px;
-  background-color: #dc3545; /* 红色表示危险操作 */
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 1em;
-  transition: background-color 0.3s ease;
-}
-
-.logout-button:hover {
-  background-color: #c82333;
+  /* el-button styles are applied */
 }
 
 .main-content {
-  flex-grow: 1; /* 占据剩余空间 */
-  padding: 30px;
-  background-color: #fff;
-  box-shadow: 0 0 10px rgba(0,0,0,0.05); /* 轻微阴影 */
-  margin: 20px; /* 与侧边栏和页面边缘的间距 */
-  border-radius: 8px; /* 圆角 */
+  padding: 20px; /* Adjust padding as needed */
+  /* el-main handles background and basic layout */
+}
+
+/* Optional: Router View Transition */
+.fade-transform-leave-active,
+.fade-transform-enter-active {
+  transition: all 0.3s ease;
+}
+
+.fade-transform-enter-from {
+  opacity: 0;
+  transform: translateX(-20px);
+}
+
+.fade-transform-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
 }
 </style>

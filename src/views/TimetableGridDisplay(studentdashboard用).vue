@@ -1,281 +1,332 @@
 <template>
-  <div class="timetable-grid-container">
-    <!-- Optional: Display current week number if showing only one week -->
-    <!-- Ensure actualWeekNumber is passed from the parent component -->
+  <div class="timetable-grid-container-el">
     <h3 v-if="totalWeeks === 1 && actualWeekNumber">第 {{ actualWeekNumber }} 周课表</h3>
+    <!-- Use ElTable for the grid -->
+    <el-table
+      :data="tableData"
+      style="width: 100%"
+      border
+      stripe
+      :empty-text="entries.length === 0 ? '暂无排课数据' : '当前周无课程安排'"
+      :row-class-name="tableRowClassName"
+      :cell-style="{ padding: '5px 0' }"
+      :header-cell-style="{ background: '#f2f2f2', color: '#606266', padding: '8px 0', textAlign: 'center' }"
+    >
+      <!-- Column for Time Period -->
+      <el-table-column label="时间/节次" width="110" fixed="left" align="center">
+        <template #default="scope">
+          <div class="period-info">
+            <div class="period-number">第 {{ scope.row.periodInfo.number }} 节</div>
+            <div class="period-time">{{ scope.row.periodInfo.start }} - {{ scope.row.periodInfo.end }}</div>
+          </div>
+        </template>
+      </el-table-column>
 
-    <div class="timetable-grid-scrollable">
-      <table class="timetable-grid">
-        <thead>
-          <tr>
-            <th>时间/星期</th>
-            <th v-for="day in daysOrder" :key="day">{{ day }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <!-- Iterate through time periods -->
-          <tr v-for="(periodTimes, period) in processedPeriods" :key="period">
-            <td>
-              <div class="period-info">
-                <div class="period-number">{{ period }}</div>
-                <div class="period-time">{{ periodTimes.start }} - {{ periodTimes.end }}</div>
+      <!-- Columns for Days of the Week -->
+      <el-table-column
+        v-for="day in daysOrder"
+        :key="day"
+        :label="day"
+        min-width="140"
+        align="center"
+      >
+        <template #default="scope">
+          <!-- scope.row[day] contains the array of entries for this period and day -->
+          <div v-if="scope.row[day] && scope.row[day].length > 0" class="timetable-cell-content">
+            <div v-for="(item, itemIndex) in scope.row[day]" :key="item.id || itemIndex" class="entry-item">
+              <div><strong>{{ item.course_name }}</strong></div>
+
+              <!-- Conditional display based on viewType -->
+              <div v-if="shouldShow(viewType, 'teacher', item.teacher_name)" class="detail-item teacher-name">
+                  <el-icon><User /></el-icon> {{ item.teacher_name }}
               </div>
-            </td>
-            <!-- Iterate through days of the week -->
-            <!-- We are only displaying one week at a time (actualWeekNumber) -->
-            <td v-for="day in daysOrder" :key="day">
-              <!-- Check if there are entries for the current week, day, and period -->
-              <!-- processedTimetable is { weekNumber: { dayOfWeek: { period: [entries] } } } -->
-              <div v-if="processedTimetable[actualWeekNumber - 1] && processedTimetable[actualWeekNumber-1][day] && processedTimetable[actualWeekNumber-1][day][period] && processedTimetable[actualWeekNumber-1][day][period].length > 0"
-                   class="timetable-cell-content">
-                <!-- Display each entry in the cell -->
-                <div v-for="(item, itemIndex) in processedTimetable[actualWeekNumber-1][day][period]" :key="item.id || itemIndex">
-                  <div><strong>{{ item.course_name }}</strong></div>
-                  <!-- Conditionally display teacher/major based on viewType -->
-                  <!-- Student view might show teacher name, but not major -->
-                  <!-- Teacher view might show major name, but not teacher name -->
-                  <!-- Major view shows both -->
-                  <div v-if="viewType === 'major' && item.teacher_name">授课教师: {{ item.teacher_name }}</div>
-                  <div v-if="viewType === 'major' && item.major_name">专业: {{ item.major_name }}</div>
-
-                  <div v-if="viewType === 'teacher' && item.major_name">专业: {{ item.major_name }}</div>
-                  <!-- Teachers' own view shouldn't repeat their name -->
-                  <!-- <div v-if="viewType === 'teacher' && item.teacher_name">教师: {{ item.teacher_name }}</div> -->
-
-                  <div v-if="viewType === 'student' && item.teacher_name">授课教师: {{ item.teacher_name }}</div>
-                  <!-- Students' own view shouldn't repeat their major -->
-                  <!-- <div v-if="viewType === 'student' && item.major_name">专业: {{ item.major_name }}</div> -->
-
-
-                  <div v-if="item.classroom_name">地点: {{ item.classroom_name }}</div>
-                   <div class="course-type" v-if="item.course_type">类型: {{ item.course_type }}</div>
-
-
-                  <!-- Add a separator if there are multiple entries in the same cell -->
-                  <hr v-if="processedTimetable[actualWeekNumber-1][day][period].length > 1 && itemIndex < processedTimetable[actualWeekNumber-1][day][period].length - 1">
-                </div>
+              <div v-if="shouldShow(viewType, 'major', item.major_name)" class="detail-item major-name">
+                  <el-icon><Collection /></el-icon> {{ item.major_name }}
               </div>
-              <!-- Empty cell if no entries -->
-              <div v-else class="timetable-cell-empty"></div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+              <div v-if="item.classroom_name" class="detail-item classroom-name">
+                  <el-icon><Location /></el-icon> {{ item.classroom_name }}
+              </div>
+              <div class="detail-item course-type" v-if="item.course_type">
+                  <el-icon><PriceTag /></el-icon> {{ item.course_type }}
+              </div>
+
+              <!-- Separator for multiple entries -->
+              <el-divider v-if="scope.row[day].length > 1 && itemIndex < scope.row[day].length - 1" />
+            </div>
+          </div>
+          <!-- Empty cell styling (can be implicit or use a placeholder) -->
+          <div v-else class="timetable-cell-empty">&nbsp;</div>
+        </template>
+      </el-table-column>
+    </el-table>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watchEffect } from 'vue';
+import { ref, computed, watch, defineProps, nextTick } from 'vue';
+import { ElTable, ElTableColumn, ElIcon, ElDivider, ElEmpty } from 'element-plus';
+// Import necessary icons
+import { User, Collection, Location, PriceTag } from '@element-plus/icons-vue';
 
-// Define props received from the parent component
+// --- Props ---
 const props = defineProps({
   entries: {
     type: Array,
-    required: true
+    required: true,
+    default: () => []
   },
-  totalWeeks: { // The total number of weeks in the semester (needed for full semester view)
+  totalWeeks: {
     type: Number,
-    default: 1 // Default to 1 as student/teacher views usually show one week
+    default: 1
   },
-  actualWeekNumber: { // The specific week number being displayed (e.g., 5 for 5th week)
+  actualWeekNumber: {
      type: Number,
-     default: 1 // Default to week 1
+     default: 1
   },
-  viewType: { // 'major', 'teacher', 'student' - helps customize display
+  viewType: {
     type: String,
     default: 'major',
     validator: (value) => ['major', 'teacher', 'student', 'admin'].includes(value)
   }
 });
 
-// Define the order of days of the week (ensure this matches backend day_of_week values)
+// --- Constants ---
 const daysOrder = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+// Default times (improved fallback)
+const defaultTimes = [
+    { start: '08:00', end: '09:30' }, { start: '09:40', end: '11:10' }, // 1-2
+    { start: '13:30', end: '15:00' }, { start: '15:10', end: '16:40' }, // 3-4
 
-// Define standard time periods and placeholder start/end times (these should ideally come from backend or config)
-// Using placeholders for now, but backend time_slots could provide actual times
-const allPeriods = Array.from({ length: 12 }, (_, i) => i + 1); // Assuming up to 12 periods
-const placeholderTimes = [
-  { start: '08:00', end: '09:30' }, { start: '09:40', end: '11:10' },
-  { start: '13:30', end: '15:00' }, { start: '15:10', end: '16:40' },
-  { start: '17:00', end: '18:30' }, { start: '18:40', end: '20:10' },
-  { start: '20:20', end: '21:50' }, // Add more if needed based on time_slots
-  // Placeholders for periods 8-12 if your system supports them
-  { start: '??:??', end: '??:??' }, { start: '??:??', end: '??:??' },
-  { start: '??:??', end: '??:??' }, { start: '??:??', end: '??:??' },
 ];
 
-// Process time slots from entries to determine periods and times
+// --- Computed Properties ---
+
+// 1. Processed Periods: Determine unique periods and their start/end times from entries
 const processedPeriods = computed(() => {
-    // Build a map of period number to start/end time
     const periodMap = {};
+    let maxPeriodNum = 0;
     props.entries.forEach(entry => {
-        if (entry.period && entry.start_time && entry.end_time) {
-            // Use backend times if available
-            periodMap[entry.period] = {
-                start: entry.start_time.substring(0, 5), // Assuming HH:MM:SS format, take HH:MM
-                end: entry.end_time.substring(0, 5)
-            };
+        if (entry.period) {
+             const periodNum = Number(entry.period);
+             maxPeriodNum = Math.max(maxPeriodNum, periodNum);
+            if (!periodMap[periodNum] && entry.start_time && entry.end_time) {
+                // Only store the first valid time found for a period
+                periodMap[periodNum] = {
+                    start: entry.start_time.substring(0, 5), // HH:MM
+                    end: entry.end_time.substring(0, 5)      // HH:MM
+                };
+            }
         }
     });
 
-    // Sort periods numerically and ensure all standard periods up to max used are included
-    const periodsInEntries = Object.keys(periodMap).map(Number).sort((a, b) => a - b);
-     const maxPeriod = periodsInEntries.length > 0 ? Math.max(...periodsInEntries) : 0;
+    // Ensure all periods up to the maximum found are included, using defaults if necessary
+    const allPeriods = {};
+    // Determine the highest period number to display (either from data or default 12)
+    const highestPeriodToDisplay = Math.max(maxPeriodNum, defaultTimes.length); // Or a fixed number like 12
 
-     const finalPeriods = {};
-     for (let p = 1; p <= maxPeriod; p++) {
-         finalPeriods[p] = periodMap[p] || placeholderTimes[p - 1] || { start: '??:??', end: '??:??' };
-     }
-
-     return finalPeriods;
-});
-
-
-// Process the raw entries into a nested structure for easy table rendering
-// Structure: { weekNumber: { dayOfWeek: { period: [entry, entry, ...] } } }
-const processedTimetable = ref({});
-
-// Use watchEffect to re-process whenever entries, totalWeeks, or actualWeekNumber changes
-watchEffect(() => {
-  const tempTimetable = {};
-
-  // Initialize structure for the relevant weeks
-  // If totalWeeks > 1, initialize for all weeks. If totalWeeks is 1, only initialize for actualWeekNumber.
-  const weeksToProcess = props.totalWeeks > 1 ? Array.from({ length: props.totalWeeks }, (_, i) => i + 1) : [props.actualWeekNumber];
-
-  weeksToProcess.forEach(weekNum => {
-      tempTimetable[weekNum - 1] = {}; // Use 0-based index for array structure
-      daysOrder.forEach(day => {
-          tempTimetable[weekNum - 1][day] = {};
-          // No need to initialize periods here, add only if entries exist
-      });
-  });
-
-
-  props.entries.forEach(entry => {
-    // Ensure necessary fields exist and are in expected format
-    if (entry.week_number && entry.day_of_week && entry.period) {
-        const weekIndex = Number(entry.week_number) - 1; // Convert to 0-based index
-
-        // Ensure the week, day, and period structure exists
-        if (!tempTimetable[weekIndex]) {
-           tempTimetable[weekIndex] = {};
-        }
-         if (!tempTimetable[weekIndex][entry.day_of_week]) {
-             tempTimetable[weekIndex][entry.day_of_week] = {};
-         }
-        if (!tempTimetable[weekIndex][entry.day_of_week][entry.period]) {
-          tempTimetable[weekIndex][entry.day_of_week][entry.period] = [];
-        }
-
-        // Add the entry to the corresponding cell
-        tempTimetable[weekIndex][entry.day_of_week][entry.period].push(entry);
-    } else {
-        console.warn('TimetableGridDisplay: Skipping entry due to missing week, day, or period:', entry);
+    for (let p = 1; p <= highestPeriodToDisplay; p++) {
+        allPeriods[p] = periodMap[p] || defaultTimes[p - 1] || { start: '??:??', end: '??:??' };
     }
-  });
-
-   // Optional: Sort entries within a cell if needed (e.g., by course name)
-   weeksToProcess.forEach(weekNum => {
-       const weekData = tempTimetable[weekNum - 1];
-       if(weekData) {
-           daysOrder.forEach(day => {
-               const dayData = weekData[day];
-               if(dayData) {
-                   Object.keys(dayData).forEach(period => {
-                       // Example sort: by course name
-                       dayData[period].sort((a, b) => a.course_name.localeCompare(b.course_name));
-                   });
-               }
-           });
-       }
-   });
-
-
-  processedTimetable.value = tempTimetable;
-  console.log('Processed Timetable Structure:', processedTimetable.value);
+    return allPeriods;
 });
 
-// Expose processedTimetable if parent needs to access it (optional)
-// defineExpose({ processedTimetable });
+// 2. Intermediate Processed Timetable (Lookup Structure)
+// Structure: { weekIndex: { dayOfWeek: { period: [entry, entry, ...] } } }
+const processedTimetableLookup = ref({});
+
+watch(() => [props.entries, props.actualWeekNumber, props.totalWeeks], () => {
+    console.log(`WATCH: Re-processing timetable lookup for week ${props.actualWeekNumber}`);
+    const tempLookup = {};
+    const weekIndex = props.actualWeekNumber - 1; // 0-based index
+
+    // Initialize structure only for the current week being displayed
+    if (weekIndex >= 0) {
+        tempLookup[weekIndex] = {};
+        daysOrder.forEach(day => {
+            tempLookup[weekIndex][day] = {};
+            // Initialize periods within the day based on processedPeriods keys
+            Object.keys(processedPeriods.value).forEach(periodNum => {
+                 tempLookup[weekIndex][day][periodNum] = []; // Initialize as empty array
+            });
+        });
+
+        props.entries.forEach(entry => {
+            // Filter entries for the *current* week only
+            if (entry.week_number && Number(entry.week_number) === props.actualWeekNumber && entry.day_of_week && entry.period) {
+                const day = entry.day_of_week;
+                const period = entry.period;
+
+                // Check if the structure exists (should exist due to initialization)
+                if (tempLookup[weekIndex] && tempLookup[weekIndex][day] && tempLookup[weekIndex][day][period]) {
+                    tempLookup[weekIndex][day][period].push(entry);
+                } else {
+                     console.warn('TimetableGridDisplay: Mismatch in structure for entry:', entry, `Target: W${weekIndex}, D${day}, P${period}`);
+                }
+            }
+        });
+
+        // Optional: Sort entries within each cell
+        if (tempLookup[weekIndex]) {
+            daysOrder.forEach(day => {
+                 if (tempLookup[weekIndex][day]) {
+                     Object.keys(tempLookup[weekIndex][day]).forEach(period => {
+                         // Sort by course name, for example
+                         tempLookup[weekIndex][day][period].sort((a, b) =>
+                             (a.course_name || '').localeCompare(b.course_name || '')
+                         );
+                     });
+                 }
+            });
+        }
+    } else {
+         console.warn(`Invalid actualWeekNumber: ${props.actualWeekNumber}`);
+    }
+
+
+    processedTimetableLookup.value = tempLookup;
+     console.log('Processed Timetable Lookup Structure:', JSON.parse(JSON.stringify(processedTimetableLookup.value)));
+}, { immediate: true, deep: true }); // Deep might be overkill if entries refs don't change
+
+
+// 3. Table Data: Transform the lookup structure into row-based data for ElTable
+const tableData = computed(() => {
+  console.log(`COMPUTED: Generating tableData for week ${props.actualWeekNumber}`);
+  const data = [];
+  const weekIndex = props.actualWeekNumber - 1;
+  const currentWeekLookup = processedTimetableLookup.value[weekIndex];
+
+  // Iterate through the determined periods to create rows
+  for (const periodNum in processedPeriods.value) {
+    const periodInfo = {
+      number: periodNum,
+      ...processedPeriods.value[periodNum] // { start, end }
+    };
+
+    const row = {
+      periodInfo: periodInfo
+    };
+
+    // Populate data for each day in this period (row)
+    daysOrder.forEach(day => {
+      // Get entries from the lookup structure for this specific week, day, and period
+      row[day] = (currentWeekLookup && currentWeekLookup[day] && currentWeekLookup[day][periodNum])
+                 ? currentWeekLookup[day][periodNum]
+                 : []; // Default to empty array if no data found
+    });
+
+    data.push(row);
+  }
+   console.log('Generated tableData:', JSON.parse(JSON.stringify(data)));
+  return data;
+});
+
+
+// --- Methods ---
+
+// Helper to decide whether to show teacher/major based on viewType
+const shouldShow = (viewType, infoType, value) => {
+    if (!value) return false; // Don't show if value is empty
+    switch (viewType) {
+        case 'admin':
+        case 'major': // Major view shows both teacher and major
+            return true;
+        case 'teacher': // Teacher view shows major, but not own name
+            return infoType === 'major';
+        case 'student': // Student view shows teacher, but not own major
+             return infoType === 'teacher';
+        default:
+            return false;
+    }
+};
+
+// Add class to rows for potential styling (e.g., odd/even) - ElTable stripe does this too
+const tableRowClassName = ({ row, rowIndex }) => {
+  if (rowIndex % 2 === 1) {
+    return 'warning-row'; // Example class name from Element Plus docs
+  }
+  return '';
+};
 
 </script>
 
 <style scoped>
-.timetable-grid-container {
-  overflow-x: auto; /* Add horizontal scroll for the container */
-}
-
-.timetable-grid-scrollable {
-    overflow-x: auto; /* Allow scrolling if the table is wider than the container */
-    width: 100%; /* Take full width */
-}
-
-.timetable-grid {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 10px;
-  min-width: 800px; /* Ensure minimum width to prevent excessive squeezing */
-}
-
-.timetable-grid th,
-.timetable-grid td {
-  border: 1px solid #ddd;
-  padding: 8px;
-  text-align: center;
-  vertical-align: top; /* Align content to the top */
-}
-
-.timetable-grid th {
-  background-color: #f2f2f2;
-  font-weight: bold;
-  white-space: nowrap; /* Prevent header text from wrapping */
+.timetable-grid-container-el {
+  /* Container styling if needed */
+   margin: 15px 0;
 }
 
 .period-info {
-    font-weight: bold;
-    white-space: nowrap;
-
+  line-height: 1.4;
+  padding: 5px 0; /* Add some vertical padding */
 }
+
+.period-number {
+  font-weight: bold;
+  font-size: 0.9em;
+}
+
 .period-time {
-    font-size: 0.8em;
-    font-weight: normal;
+  font-size: 0.8em;
+  color: #666;
 }
 
 .timetable-cell-content {
-    min-height: 60px; /* Ensure cells have a minimum height */
-    text-align: center; /* Align content left within the cell */
+  padding: 5px;
+  text-align: center; /* Align text left within cells */
+  min-height: 70px; /* Ensure minimum height */
+  font-size: 1.05em; /* Slightly smaller font size for cell content */
+  line-height: 1.5;
 }
-
-.timetable-cell-content div {
-    margin-bottom: 5px; /* Spacing between items in the same cell */
+.entry-item > div {
+     margin-bottom: 3px; /* Space between lines in an entry */
 }
-.timetable-cell-content div:last-child {
-    margin-bottom: 0;
+.entry-item > div:last-child {
+     margin-bottom: 0;
 }
 
 .timetable-cell-empty {
-    min-height: 60px; /* Match min-height for empty cells */
+  min-height: 70px; /* Match content height */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ccc; /* Optional: subtle color for empty cells */
 }
 
-.timetable-cell-content hr {
-    border: none;
-    border-top: 1px dashed #ccc;
-    margin: 5px 0;
+.detail-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px; /* Space between icon and text */
+    color: #333; /* Default color for details */
+}
+.detail-item .el-icon {
+    font-size: 1.1em; /* Slightly larger icon */
 }
 
-/* Style for course type */
-.course-type {
-    font-size: 0.8em;
-    color: #555;
-    margin-top: 2px; /* Small margin above type */
+
+.teacher-name { color: #007bff; } /* Example color */
+.major-name { color: #28a745; } /* Example color */
+.classroom-name { color: #dc3545; } /* Example color */
+.course-type { color: #6c757d; font-style: italic; } /* Example style */
+
+
+/* Element Plus Divider customization */
+.timetable-cell-content .el-divider--horizontal {
+    margin: 8px 0; /* Adjust spacing around divider */
+    border-top: 1px dashed #dcdfe6;
 }
 
 h3 {
     text-align: center;
-    margin-top: 15px;
     margin-bottom: 15px;
     color: #333;
+    font-weight: 600;
 }
+
+/* Style for odd/even rows if using row-class-name (optional, stripe does similar) */
+/*
+.el-table .warning-row {
+  background: oldlace;
+}
+*/
 </style>

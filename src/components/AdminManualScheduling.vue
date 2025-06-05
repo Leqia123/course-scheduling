@@ -27,7 +27,7 @@
     <!-- 3. 课表网格 -->
     <div v-if="selectedSemester && selectedWeek && !loading && semesterWeeks > 0">
         <el-table :data="periods" border style="width: 100%" v-loading="loading">
-            <el-table-column prop="timeLabel" label="时间" width="120">
+            <el-table-column prop="timeLabel" label="时间" width="120"  align="center">
                 <template #default="scope">
                     <div v-html="scope.row.timeLabel.replace('\\n', '<br/>')"></div>
                 </template>
@@ -398,11 +398,14 @@ onMounted(() => {
 <style scoped> /* 样式可以保持不变 */
 .page-content {
   padding: 20px;
+  font-size: 22px;
+  text-align: center;
 }
 .el-select {
   margin-bottom: 20px;
   min-width: 200px; /* 可以调整宽度 */
 }
+
 .timetable-cell {
   min-height: 180px;
 
@@ -410,7 +413,7 @@ onMounted(() => {
   position: relative;
   cursor: pointer;
   border: 1px dashed #eee;
-  display: flex;
+
   flex-direction: column;
   align-items: center;
   justify-content: flex-start; /* 让内容从顶部开始排列 */
@@ -426,7 +429,7 @@ onMounted(() => {
   border-radius: 4px;
   padding: 5px;
   margin-bottom: 3px;
-  font-size: 12px;
+  font-size: 14px;
   width: 95%;
   text-align: center;
   cursor: pointer;
@@ -441,14 +444,7 @@ onMounted(() => {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.empty-cell {
-    color: #c0c4cc;
-    font-size: 12px;
-    position: absolute; /* 绝对定位到底部或中间 */
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-}
+
 .dialog-footer {
     display: flex;
     justify-content: space-between;
@@ -456,9 +452,11 @@ onMounted(() => {
 }
 .el-table .cell {
     padding: 5px;
+
 }
 .el-table th .cell, .el-table td .cell {
     white-space: pre-wrap;
     line-height: 1.4;
+
 }
 </style>

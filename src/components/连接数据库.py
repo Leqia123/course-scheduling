@@ -7,25 +7,24 @@ cur = con.cursor()
 select_query = """-- 假设 user 'leqijia' 的 id 是 1009 (根据你的 users 插入语句)
 -- SQL for PostgreSQL
 
-CREATE TABLE teacher_scheduling_preferences (
-    id SERIAL PRIMARY KEY,
-    teacher_id INTEGER NOT NULL, -- 哪个老师提出的要求 (FOREIGN KEY to teachers.id)
-    semester_id INTEGER NOT NULL, -- 针对哪个学期 (FOREIGN KEY to semesters.id)
-    timeslot_id INTEGER NOT NULL, -- 针对哪个时间段 (FOREIGN KEY to time_slots.id)
-    preference_type VARCHAR(50) NOT NULL, -- 偏好类型: 'avoid' (避免), 'prefer' (优先), etc. (当前只用 'avoid')
-    reason TEXT, -- 教师提出此要求的原因 (可选)
-    status VARCHAR(50) DEFAULT 'pending', -- 状态: 'pending', 'approved', 'rejected', 'applied'
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-
-    -- 添加外键约束
-    FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
-    FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE CASCADE,
-    FOREIGN KEY (timeslot_id) REFERENCES time_slots(id) ON DELETE CASCADE,
-
-    -- 联合唯一约束，防止同一教师在同一学期同一时段提交重复的偏好类型
-    UNIQUE (teacher_id, semester_id, timeslot_id, preference_type)
-);
+INSERT INTO course_assignments (id, major_id, course_id, teacher_id, semester_id, is_core_course, expected_students) VALUES
+(1, 1, 101, 1, 1, TRUE, 75), (2, 1, 102, 1, 1, TRUE, 75), (3, 1, 103, 2, 1, TRUE, 75),
+(4, 1, 401, 3, 1, TRUE, 75), (5, 1, 402, 3, 1, TRUE, 75), (6, 1, 403, 3, 1, TRUE, 75),
+(7, 1, 404, 7, 1, TRUE, 75), (8, 1, 405, 1, 1, TRUE, 75), (9, 1, 406, 3, 1, FALSE, 75),
+(10, 1, 408, 1, 1, FALSE, 75), (11, 1, 407, 8, 1, TRUE, 75),
+(12, 2, 101, 1, 1, TRUE, 65), (13, 2, 102, 1, 1, TRUE, 65), (14, 2, 103, 2, 1, TRUE, 65),
+(15, 2, 104, 6, 1, TRUE, 65), (16, 2, 201, 4, 1, TRUE, 65), (17, 2, 202, 6, 1, TRUE, 65),
+(18, 2, 203, 6, 1, FALSE, 65), (19, 2, 204, 4, 1, TRUE, 65), (20, 2, 205, 4, 1, TRUE, 65),
+(21, 2, 207, 4, 1, FALSE, 65), (22, 2, 206, 8, 1, TRUE, 65),
+(23, 3, 101, 1, 1, TRUE, 80), (24, 3, 103, 2, 1, TRUE, 80), (25, 3, 401, 3, 1, TRUE, 80),
+(26, 3, 402, 3, 1, TRUE, 80), (27, 3, 403, 3, 1, TRUE, 80), (28, 3, 406, 3, 1, TRUE, 80),
+(29, 3, 404, 7, 1, FALSE, 80), (30, 3, 405, 1, 1, FALSE, 80), (31, 3, 407, 8, 1, TRUE, 80),
+(32, 4, 101, 1, 1, TRUE, 60), (33, 4, 103, 2, 1, TRUE, 60), (34, 4, 104, 6, 1, TRUE, 60),
+(35, 4, 501, 5, 1, TRUE, 60), (36, 4, 502, 5, 1, TRUE, 60), (37, 4, 503, 5, 1, TRUE, 60),
+(38, 4, 504, 5, 1, TRUE, 60), (39, 4, 505, 5, 1, FALSE, 60), (40, 4, 506, 8, 1, TRUE, 60),
+(41, 5, 103, 2, 1, TRUE, 55), (42, 5, 104, 6, 1, TRUE, 55), (43, 5, 601, 2, 1, TRUE, 55),
+(44, 5, 602, 6, 1, TRUE, 55), (45, 5, 603, 7, 1, TRUE, 55), (46, 5, 604, 7, 1, FALSE, 55),
+(47, 5, 605, 8, 1, TRUE, 55);
 
 ;
 """
