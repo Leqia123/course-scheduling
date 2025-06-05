@@ -2069,6 +2069,243 @@ def delete_teacher_scheduling_preference(preference_id):
     finally:
         if cur: cur.close()
         if conn: conn.close()
+
+
+#手动调课用
+# --- 在 app.py 文件顶部添加必要的导入 ---
+# (已有的导入...)
+from flask import abort # 用于返回错误码
+
+# --- Helper function for conflict checking (Simplified Example) ---
+def check_conflict(conn, entry_id_to_update, new_timeslot_id, new_classroom_id, week_number):
+    """
+    检查更新后的条目是否与现有条目冲突 (简化版)。
+    返回冲突描述字符串，如果无冲突则返回 None。
+    注意：这个检查逻辑需要根据你的具体规则细化！
+    """
+    cur = None
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # 获取要更新的条目的基本信息 (教师, 专业, 学期)
+        cur.execute("""
+            SELECT teacher_id, major_id, semester_id
+            FROM timetable_entries
+            WHERE id = %s
+        """, (entry_id_to_update,))
+        entry_info = cur.fetchone()
+        if not entry_info:
+            return "要更新的条目不存在" # 或者在调用前检查
+
+        teacher_id = entry_info['teacher_id']
+        major_id = entry_info['major_id']
+        semester_id = entry_info['semester_id'] # 用于限定范围
+
+        # 检查教师冲突: 同学期、同周次、新时间段，是否有其他课 (排除自身)
+        cur.execute("""
+            SELECT te.id, c.name as course_name
+            FROM timetable_entries te
+            JOIN courses c ON te.course_id = c.id
+            WHERE te.teacher_id = %s
+              AND te.semester_id = %s
+              AND te.week_number = %s
+              AND te.timeslot_id = %s
+              AND te.id != %s
+        """, (teacher_id, semester_id, week_number, new_timeslot_id, entry_id_to_update))
+        teacher_conflict = cur.fetchone()
+        if teacher_conflict:
+            return f"教师在该时间已有课程: {teacher_conflict['course_name']}"
+
+        # 检查教室冲突: 同学期、同周次、新时间段、新教室，是否已被占用 (排除自身)
+        if new_classroom_id: # 只有在指定了新教室时才检查
+            cur.execute("""
+                SELECT te.id, c.name as course_name, m.name as major_name
+                FROM timetable_entries te
+                JOIN courses c ON te.course_id = c.id
+                JOIN majors m ON te.major_id = m.id
+                WHERE te.classroom_id = %s
+                  AND te.semester_id = %s
+                  AND te.week_number = %s
+                  AND te.timeslot_id = %s
+                  AND te.id != %s
+            """, (new_classroom_id, semester_id, week_number, new_timeslot_id, entry_id_to_update))
+            classroom_conflict = cur.fetchone()
+            if classroom_conflict:
+                return f"教室在该时间已被专业 '{classroom_conflict['major_name']}' 的课程 '{classroom_conflict['course_name']}' 占用"
+
+        # 检查专业/班级冲突: 同学期、同周次、新时间段，该专业是否已有其他课 (排除自身)
+        cur.execute("""
+            SELECT te.id, c.name as course_name
+            FROM timetable_entries te
+            JOIN courses c ON te.course_id = c.id
+            WHERE te.major_id = %s
+              AND te.semester_id = %s
+              AND te.week_number = %s
+              AND te.timeslot_id = %s
+              AND te.id != %s
+        """, (major_id, semester_id, week_number, new_timeslot_id, entry_id_to_update))
+        major_conflict = cur.fetchone()
+        if major_conflict:
+            return f"该专业在该时间已有课程: {major_conflict['course_name']}"
+
+        return None # 无冲突
+
+    except Exception as e:
+        app.logger.error(f"Conflict check error: {e}", exc_info=True)
+        return f"冲突检查时发生错误: {e}" # 返回错误信息
+    finally:
+        if cur: cur.close()
+
+
+# --- 添加新的 API 端点 ---
+
+@app.route('/api/classrooms-list', methods=['GET'])
+def get_classrooms_list():
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None: return jsonify({"message": "数据库连接失败"}), 500
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        # 添加了 capacity 和 type 字段，前端可能需要
+        cur.execute("SELECT id, building, room_number, capacity, room_type FROM classrooms ORDER BY building, room_number")
+        classrooms = cur.fetchall()
+        # 组合 building 和 room_number 为 name 方便显示
+        for room in classrooms:
+            room['name'] = f"{room['building']}-{room['room_number']}"
+        return jsonify(classrooms), 200
+    except Exception as e:
+        app.logger.error(f"Error fetching classrooms list: {e}", exc_info=True)
+        return jsonify({"message": "获取教室列表失败"}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+@app.route('/api/timetables/entry/<int:entry_id>', methods=['PUT'])
+def update_timetable_entry(entry_id):
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "请求体不能为空"}), 400
+
+    # --- 获取并验证输入 (修改部分) ---
+
+    # 1. 获取 timeslot_id (期望是整数，如果不存在或无效则报错)
+    raw_timeslot_id = data.get('timeslot_id')
+    if raw_timeslot_id is None:  # 检查键是否存在
+        # 根据你的业务逻辑，如果 timeslot_id 是必须的，则返回错误
+        return jsonify({"message": "缺少必要参数: timeslot_id"}), 400
+    try:
+        new_timeslot_id = int(raw_timeslot_id)  # 尝试转换为整数
+    except (ValueError, TypeError):
+        # 值存在但无法转为整数
+        return jsonify({"message": "timeslot_id 必须是一个有效的整数"}), 400
+
+    # 2. 获取 classroom_id (期望是整数，但允许为 None/null)
+    raw_classroom_id = data.get('classroom_id')  # 直接获取，允许 None
+    new_classroom_id = None
+    if raw_classroom_id is not None:  # 只有在不为 None 时才尝试转换
+        try:
+            new_classroom_id = int(raw_classroom_id)
+        except (ValueError, TypeError):
+            return jsonify({"message": "classroom_id 必须是一个有效的整数或 null"}), 400
+    # 如果 raw_classroom_id 就是 None, new_classroom_id 保持为 None
+
+    # 3. 获取 week_number (必须是正整数)
+    raw_week_number = data.get('week_number')
+    if raw_week_number is None:
+        return jsonify({"message": "缺少必要参数: week_number"}), 400
+    try:
+        week_number = int(raw_week_number)
+        if week_number <= 0:  # 添加业务逻辑验证
+            raise ValueError("周数必须是正数")
+    except (ValueError, TypeError):
+        return jsonify({"message": "week_number 必须是一个有效的正整数"}), 400
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None: return jsonify({"message": "数据库连接失败"}), 500
+        conn.autocommit = False # 使用事务
+        cur = conn.cursor()
+
+        # --- 检查目标 timeslot 和 classroom 是否有效 (如果提供了 classroom) ---
+        cur.execute("SELECT 1 FROM time_slots WHERE id = %s", (new_timeslot_id,))
+        if not cur.fetchone():
+            conn.rollback()
+            return jsonify({"message": f"无效的时间段 ID: {new_timeslot_id}"}), 400
+        if new_classroom_id is not None:
+            cur.execute("SELECT 1 FROM classrooms WHERE id = %s", (new_classroom_id,))
+            if not cur.fetchone():
+                conn.rollback()
+                return jsonify({"message": f"无效的教室 ID: {new_classroom_id}"}), 400
+
+        # --- 执行冲突检查 ---
+        # 注意：week_number 需要从 data 中获取，因为更新是针对特定周次的
+        conflict_reason = check_conflict(conn, entry_id, new_timeslot_id, new_classroom_id, week_number)
+        if conflict_reason:
+            conn.rollback() # 回滚事务
+            return jsonify({"message": f"无法更新，存在冲突: {conflict_reason}"}), 409 # 409 Conflict
+
+        # --- 更新数据库 ---
+        # 注意：这里只更新 timeslot_id 和 classroom_id
+        # 如果需要更新其他字段（如 week_number），也需要加入 SET 子句
+        # 但通常手动调整是移动到新的时间/地点，周次不变或由用户指定
+        update_query = """
+        UPDATE timetable_entries
+        SET timeslot_id = %s, classroom_id = %s
+        WHERE id = %s
+        """
+        # 使用 new_classroom_id，如果它是 None，数据库字段需要允许 NULL
+        cur.execute(update_query, (new_timeslot_id, new_classroom_id, entry_id))
+
+        if cur.rowcount == 0:
+            conn.rollback()
+            return jsonify({"message": "未找到要更新的课表条目，或数据未改变"}), 404
+
+        conn.commit() # 提交事务
+        return jsonify({"message": "课表条目更新成功"}), 200
+
+    except psycopg2.Error as db_err:
+        if conn: conn.rollback()
+        app.logger.error(f"DB error updating timetable entry {entry_id}: {db_err}", exc_info=True)
+        return jsonify({"message": f"数据库操作失败: {db_err}"}), 500
+    except Exception as e:
+        if conn: conn.rollback()
+        app.logger.error(f"Error updating timetable entry {entry_id}: {e}", exc_info=True)
+        return jsonify({"message": f"服务器内部错误: {e}"}), 500
+    finally:
+        if cur: cur.close()
+        if conn:
+            conn.autocommit = True # 恢复 autocommit 状态
+            conn.close()
+
+@app.route('/api/timetables/entry/<int:entry_id>', methods=['DELETE'])
+def delete_timetable_entry(entry_id):
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        if conn is None: return jsonify({"message": "数据库连接失败"}), 500
+        cur = conn.cursor()
+        conn.autocommit = True # 删除是单个操作
+
+        cur.execute("DELETE FROM timetable_entries WHERE id = %s", (entry_id,))
+
+        if cur.rowcount > 0:
+            return jsonify({"message": f"课表条目 {entry_id} 删除成功"}), 200
+        else:
+            return jsonify({"message": "删除失败，课表条目可能不存在"}), 404
+
+    except psycopg2.Error as db_err:
+        app.logger.error(f"DB error deleting timetable entry {entry_id}: {db_err}", exc_info=True)
+        return jsonify({"message": f"数据库操作失败: {db_err}"}), 500
+    except Exception as e:
+        app.logger.error(f"Error deleting timetable entry {entry_id}: {e}", exc_info=True)
+        return jsonify({"message": f"服务器内部错误: {e}"}), 500
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
 @app.route('/')
 def index():
     return "Timetable Scheduling Backend API is running."
