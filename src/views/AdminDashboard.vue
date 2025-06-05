@@ -60,7 +60,7 @@ const logout = () => {
 }
 
 .sidebar {
-  width: 250px;
+  width: 200px;
   background-color: #343a40; /* 深色背景 */
   color: white;
   padding: 20px;

@@ -213,7 +213,7 @@ const nextWeek = () => { if (currentWeek.value < props.totalWeeks) currentWeek.v
   border: 1px solid #ccc;
   padding: 8px;
   text-align: center;
-  min-width: 115px; /* Minimum width for content */
+  min-width: 124px; /* Minimum width for content */
   height: 30px; /* Fixed height for cells */
   vertical-align: top;
 }
