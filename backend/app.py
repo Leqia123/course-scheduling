@@ -176,14 +176,6 @@ def get_id_from_name(cur, table_name, name_column, name_value, id_column='id', a
     return result[0] if result else None
 
 
-# --- API Endpoints ---
-
-# 在 app.py 顶部添加导入
-import datetime
-import math # 用于向上取整
-
-# ... (其他导入)
-
 # 在 app.py 文件顶部导入必要的库
 import datetime
 import math # 用于向上取整
@@ -683,7 +675,7 @@ def get_teachers_list():
         if conn: conn.close()
 
 
-@app.route('/api/course-plans', methods=['POST'])  # Manual Add Course Plan
+@app.route('/api/course-plans', methods=['POST'])  # 手动添加功能
 def add_course_plan():
     data = request.get_json()
     if not data:
@@ -784,7 +776,7 @@ def add_course_plan():
             conn.close()
 
 
-@app.route('/api/course-plans/<int:plan_id>', methods=['PUT'])  # Manual Edit Course Plan
+@app.route('/api/course-plans/<int:plan_id>', methods=['PUT'])  # 编辑功能
 def update_course_plan(plan_id):
     data = request.get_json()
     if not data:
@@ -1001,7 +993,7 @@ def get_semester_timetable(semester_id):
         if conn: conn.close()
 
 
-# API to export timetable data for a whole semester to Excel
+# API to export timetable data for a whole semester to Excel#无用
 @app.route('/api/timetables/export/semester/<int:semester_id>', methods=['GET'])
 def export_semester_timetable_excel(semester_id):
     try:
@@ -1356,6 +1348,7 @@ def export_major_timetable_excel(major_id, semester_id):
         app.logger.error(f"API Export: Error exporting major timetable: {e}", exc_info=True)
         return jsonify({"message": f"导出专业课表Excel失败: {str(e)}"}), 500
 
+#学生登录用
 @app.route('/api/timetables/student/<int:user_id>/semester/<int:semester_id>', methods=['GET'])
 def get_student_timetable(user_id, semester_id):
     """
@@ -1544,7 +1537,7 @@ def export_student_timetable_excel(user_id, semester_id):
         return jsonify({"message": f"导出Excel失败: {str(e)}"}), 500
     finally:
         if conn: conn.close() # Ensure connection is closed
-# Add a root route or basic info route if desired
+# 教师登录用
 @app.route('/api/timetables/teacher-dashboard/<int:user_id>/semester/<int:semester_id>', methods=['GET'])
 def get_teacher_weekly_timetable(user_id, semester_id):
     """
@@ -1936,68 +1929,7 @@ def get_teacher_scheduling_preferences(user_id):
 
 @app.route('/api/teacher/scheduling-preferences/<int:preference_id>', methods=['DELETE'])
 def delete_teacher_scheduling_preference(preference_id):
-    # In a real app, securely get the user_id from the authenticated context
-    # For this example, let's assume user_id is passed in query parameters (less secure)
-    # Or modify to get it from g.user_id if using auth middleware
-    # user_id = request.args.get('user_id', type=int) # Example using query param (less secure)
-    # Or from request body (less secure for DELETE)
-    # data = request.json
-    # user_id = data.get('user_id')
 
-    # SECURE APPROACH (Assuming user_id is available from auth context, e.g., Flask-Login, JWT)
-    # Replace this placeholder with how your app gets the logged-in user's ID
-    # Example using a hypothetical get_logged_in_user_id() function:
-    logged_in_user_id = None # Placeholder
-    # try:
-    #     logged_in_user_id = get_logged_in_user_id() # Your actual function
-    # except Exception as e:
-    #     app.logger.error(f"Could not get logged in user ID: {e}")
-    #     return jsonify({"message": "无法验证用户身份"}), 401 # Unauthorized
-
-
-    # --- Temporarily use a placeholder user_id for demonstration if you don't have auth setup ---
-    # You will need to replace this with your actual method of getting user_id securely.
-    # If frontend sends user_id, get it from there (but this is less secure for DELETE)
-    # As a temporary hack for local testing: maybe get user_id from localStorage in frontend
-    # and send it as a query parameter? No, let's stick to path parameter and assume auth validates it.
-    # We need to ensure that the *actual logged-in user* is the one making the request.
-    # The most robust way is for the auth system to provide the user ID to the backend.
-    # Let's assume your auth middleware ensures `user_id` is available in the request context
-    # or that the frontend passes it securely (e.g. in a header that your middleware verifies).
-    # For the function signature, it's better to have a way to get the user ID.
-
-    # --- Let's adjust the API design for better security ---
-    # The API should not take teacher_id or user_id in the path or body for DELETE
-    # because that would allow a malicious user to try deleting *other* teachers' preferences.
-    # Instead, the backend must know the identity of the user *making the request*.
-    # The API should only take the preference_id to be deleted.
-    # The backend then checks if the preference belongs to the authenticated user.
-
-    # Re-designing the DELETE API: only takes preference_id, backend verifies ownership
-    # Assuming your auth system makes the logged-in user's ID available, e.g., via `g` object or similar context.
-    # Let's simulate getting logged_in_user_id here for demonstration, but REPLACE THIS.
-
-    # Placeholder for getting logged in user ID (REPLACE WITH YOUR AUTH MECHANISM)
-    # For this example, let's get it from a query parameter. UNSAFE FOR PRODUCTION!
-    # user_id = request.args.get('user_id', type=int)
-    # if user_id is None:
-    #      return jsonify({"message": "无法获取用户身份信息"}), 401 # Unauthorized
-
-
-    # BETTER: Rely on your actual authentication system.
-    # If you have Flask-Login:
-    # from flask_login import current_user
-    # if not current_user.is_authenticated:
-    #    return jsonify({"message": "用户未认证"}), 401
-    # user_id = current_user.id
-    # Find teacher_id from user_id
-
-    # For simplicity in this example, let's assume the `user_id` is passed securely somehow,
-    # and we will retrieve it *within* this function for verification.
-    # A more secure structure would be middleware handling user ID extraction.
-    # Let's refine the current function structure slightly.
-
-    # --- Revised DELETE API Logic ---
     conn = None
     cur = None
     try:
